@@ -45,16 +45,12 @@ Friend requests take a user id, but players know each other's usernames. Auth ne
 such as `GET /users/by-username/{username}` (exact, case-insensitive match, only public fields,
 rate limited so it can't be used to list every account), exposed through the BFF.
 
-## Separate database for tests
-The test suites of Auth, Social and Stats write into the dev PostgreSQL database (Redis tests
-already use their own databases, 12 to 15, and flush them). Test accounts, profiles and
-matches pile up, and the Stats tests' fake players (about a million kills each) sit at the top
-of the dev leaderboards.
-
-Fix: a `tpsarena_test` database created by `infra/postgres/init.sh` with the same schemas and
-users, migrations run against it before the tests, and each suite's `DATABASE_URL` pointed at
-it (e.g. in a `conftest.py` that sets the environment before importing the app). Tables can
-then be truncated between tests, which also lets the leaderboard tests check exact ranks.
+## Stream workers survive a Redis restart
+The API services reconnect to Redis on their own, but the stream workers (`StreamConsumer` in
+`libs/common`) exit on a lost connection and rely on Docker's `restart: unless-stopped`.
+Fix: in `StreamConsumer.run`, catch connection errors, wait with backoff and resume (and use
+the same `Retry` settings in `consumer_redis`); release a new `tpsarena-common` version and
+upgrade the services.
 
 ## Before the public release
 - Move email sending from the Gmail account to an own domain + transactional provider

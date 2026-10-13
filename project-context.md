@@ -38,13 +38,21 @@ This summarizes design decisions made in a previous conversation. Use it as the 
 | **Godot dedicated servers** (GDScript) | Same Godot project exported for Linux, run `--headless`. One match per instance, server-authoritative (clients send inputs). ENet over UDP. Also relays in-match chat. | In memory |
 
 ### Infrastructure
-- **PostgreSQL**: one server, **one schema per service** (`auth`, `social`, `stats`, `chat`), each service with its own DB user that can only access its schema.
-- **Redis**: one instance used for the server registry, join tickets, presence keys, parties/invites, party chat, and **Redis Streams as the message broker**. **AOF persistence must be on** (stream messages must survive a restart).
+- **PostgreSQL**: **one database per service** (`auth`, `social`, `stats`, `chat`), each with its own user; in development each runs in the service's own Postgres container. Inside its database a service keeps its tables in a schema of the same name (created by its first migration). A service can move to another server by changing its `DATABASE_URL`.
+- **Redis**: one shared instance used for the server registry, join tickets, presence keys, parties/invites, party chat, and **Redis Streams as the message broker**. **AOF persistence must be on** (stream messages must survive a restart).
+  - **Every key starts with its owning service** (`auth:`, `serverlist:`, `social:`, `stats:`, `realtime:`); only the stream names (`user.deleted`, `social.events`, …) are shared.
+  - **One ACL user per service** (`infra/redis/start.sh`), limited to its own prefix, read/write on the streams it consumes (consumer groups record acknowledgements) and write-only on the streams it only publishes; `-@dangerous` (no `FLUSHDB`, `KEYS`, `CONFIG`…). Each service's `REDIS_URL` carries its user and password.
+  - The `default` user is the admin, behind a password, and **must keep full rights**: Redis replays the AOF at startup as the default user and silently drops any `MULTI`/`EXEC` (which includes Lua script results) it isn't allowed to run.
+  - Services' Redis clients reconnect and retry on connection errors, so a Redis restart doesn't fail requests.
 - **Email sending** goes through plain **SMTP** configured by environment variables (`SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM`), so changing provider is a configuration change only:
   - **Local development**: **Mailpit** in Docker Compose catches all outgoing emails in a web inbox.
   - **Testing with real inboxes and the small alpha (current choice)**: a **dedicated Gmail account** (not a personal one) with 2-Step Verification and an **app password**, sending through `smtp.gmail.com:587` with STARTTLS. Limits: 500 emails/day; exceeding it can block sending for up to 24 h; changing the account password revokes the app password.
   - **Before the public release**: own domain (e.g. `no-reply@yourgame.com`) with a transactional provider (Brevo or Scaleway TEM preferred, EU-based) and SPF, DKIM and DMARC records. Never send from a Gmail address through a third-party provider (fails DMARC).
-- Local dev: Docker Compose for services + databases + Mailpit, headless Godot server locally, several game clients on one machine.
+- Local dev: Docker Compose, headless Godot server locally, several game clients on one machine.
+  - **Each service runs alone** from its folder: `docker compose --profile standalone up --build` starts it with its own Postgres and its own Redis (`services/<name>/compose.yaml`, `.env.example`, `README.md`).
+  - **The full stack** is the root `docker-compose.yml`, which `include:`s every service's `compose.yaml` plus `infra/compose.yaml` (the shared Redis with ACLs) and small `infra/fullstack/*.yaml` overrides (wait for the shared Redis). Variables come from the root `.env`.
+  - **Tests** start their own throwaway Postgres/Redis containers with testcontainers (`uv run pytest` in a service folder, Docker running); they never touch development data.
+  - Auth's JWT signing key lives in `services/auth/keys/` (git-ignored), created by `services/auth/scripts/gen_keys.py`.
 - **Cross-platform development (Debian and Windows 11)**: Docker Desktop with the WSL 2 backend on Windows, native Docker on Debian, same `docker-compose.yml` on both. Keep the repository working on both systems: a `.gitattributes` forcing LF line endings (shell scripts and Dockerfiles break with CRLF), no OS-specific paths, and helper scripts that run in both environments (e.g. Python scripts or a Makefile used from WSL). The headless game server can be exported for Linux from either OS; on Windows it can run in Docker or WSL.
 
 ### Tech stack
@@ -63,6 +71,7 @@ Why this split: the stateless services are ordinary request/response work, where
 
 Conventions:
 - **Event formats have one source of truth**: Pydantic models in a shared internal Python package → exported to JSON Schema → TypeScript types generated with `json-schema-to-typescript`. A format change then breaks the TypeScript build instead of silently breaking notifications.
+- **Versioned shared package**: services depend on a **git tag** of `libs/common` (`common-vX.Y.Z`) from the private GitHub repo `ElianPICQ/TSArena_backend`, pinned to a commit by `uv.lock`. `scripts/release_common.py X.Y.Z` runs its tests, updates its version and CHANGELOG, tags and pushes; each service upgrades on its own (change the tag, `uv lock`). Images build from the service folder; the builder stage downloads the package through the developer's SSH agent (`ssh: [default]` in compose, `ssh-add` once per session) and the final image has no git or keys. `uv run --with-editable ../../libs/common pytest` tries an unreleased change.
 - **Shared internal Python package** (`libs/common`, `tpsarena_common`) for the Python services: JWT verification (JWKS fetched once, cached, fetched again on an unknown `kid`), the Redis Streams consumer base (consumer groups, `XACK`, `XAUTOCLAIM`, duplicate skipping, undecodable messages logged and acknowledged), event models.
 - **Stream entry format**: every entry has three fields: `event_id`, `type` (e.g. `party.updated`, picks the model) and `data` (the model's other fields as JSON).
 - **Stream consumers run as a separate process** from the API: same codebase, different entry point (e.g. `python -m stats.worker`), so the API and the consumer restart and scale independently.
@@ -95,7 +104,7 @@ Conventions:
 | Kind | Transport | Storage | Lifetime |
 |---|---|---|---|
 | **Friend to friend** | Real-time service (WebSocket) | PostgreSQL `chat` schema | Persisted. Delivered when the friend comes online. Deleted on `user.deleted`. |
-| **Party chat** | Real-time service (WebSocket) | Redis list `party_chat:{party_id}` (capped) | Deleted when the party is disbanded (`party.disbanded` event). |
+| **Party chat** | Real-time service (WebSocket) | Redis list `realtime:party_chat:{party_id}` (capped) | Deleted when the party is disbanded (`party.disbanded` event). |
 | **In-match chat** | Game server (Godot RPC over ENet) | Game server memory only | Gone when the match ends. Never stored. |
 
 The real-time service knows party membership from `party.updated` events (it keeps its own copy) and only lets members read and post in a party's chat. It does not read Social's Redis keys.
@@ -104,33 +113,33 @@ The real-time service knows party membership from `party.updated` events (it kee
 
 ```
 # Server registry (Server List API)
-server:{server_id}      hash    address, port, name, region, map, status, players, max_players, party_id, reserved_until, build_version, started_at   (TTL 15 s, refreshed by heartbeat)
-server:{server_id}:tickets  zset  unused ticket ids scored by expiry: each holds a slot; reserved_slots = unexpired entries (computed, not stored)
-servers:active          zset    server_id scored by last heartbeat time (stale entries filtered and cleaned)
-ticket:{ticket_id}      string  { user_id, server_id }   (TTL 30 s, single use)
+serverlist:server:{server_id}      hash    address, port, name, region, map, status, players, max_players, party_id, reserved_until, build_version, started_at   (TTL 15 s, refreshed by heartbeat)
+serverlist:server:{server_id}:tickets  zset  unused ticket ids scored by expiry: each holds a slot; reserved_slots = unexpired entries (computed, not stored)
+serverlist:servers:active          zset    server_id scored by last heartbeat time (stale entries filtered and cleaned)
+serverlist:ticket:{ticket_id}      string  { user_id, server_id }   (TTL 30 s, single use)
 
 # Rate limits (Auth API)
-ratelimit:{action}:{email_or_ip}   counter   INCR + EXPIRE window (e.g. 3 code emails per 15 min, 10 logins per minute)
+auth:ratelimit:{action}:{email_or_ip}   counter   INCR + EXPIRE window (e.g. 3 code emails per 15 min, 10 logins per minute)
 
 # Server status lifecycle
 idle → reserved (allocated to a party) → in_progress (visible in public list if slots free) → ending → idle
 
 # Presence (Real-time service)
-presence:{user_id}      { status, activity: menu | in_match }   (TTL 60 s, refreshed by client heartbeat)
+realtime:presence:{user_id}      { status, activity: menu | in_match }   (TTL 60 s, refreshed by client heartbeat)
 
 # Party chat (Real-time service)
-party_chat:{party_id}           list    recent party messages, capped; deleted on party.disbanded
-party_chat:{party_id}:members   set     copy of party membership, maintained from party.updated events
+realtime:party_chat:{party_id}           list    recent party messages, capped; deleted on party.disbanded
+realtime:party_chat:{party_id}:members   set     copy of party membership, maintained from party.updated events
 
 # Leaderboards (Stats API): cache of PostgreSQL totals, rebuilt from PostgreSQL if lost
-leaderboard:{type}      zset    user_id scored by all-time total; type = xp | wins | kills (written with ZADD GT: totals only grow)
-leaderboards:built      string  marker: absent means the boards must be rebuilt
+stats:leaderboard:{type}      zset    user_id scored by all-time total; type = xp | wins | kills (written with ZADD GT: totals only grow)
+stats:leaderboards:built      string  marker: absent means the boards must be rebuilt
 
 # Parties (Social API)
-party:{party_id}            hash    leader_id, status (lobby | launching | in_match), created_at
-party:{party_id}:members    set     up to 8 user_ids (full-check + add done atomically with a Lua script)
-user:{user_id}:party        string  party_id (one party per player)
-invite:{invite_id}          hash    party_id, from, to   (TTL 60 s)
+social:party:{party_id}            hash    leader_id, status (lobby | launching | in_match), created_at
+social:party:{party_id}:members    set     up to 8 user_ids (full-check + add done atomically with a Lua script)
+social:user:{user_id}:party        string  party_id (one party per player)
+social:invite:{invite_id}          hash    party_id, from, to   (TTL 60 s)
 ```
 
 ## Redis Streams (events)
@@ -248,7 +257,7 @@ flowchart LR
     Email["SMTP<br/>Mailpit locally · Gmail app password for alpha"]
     AuthWorker["Auth worker<br/>sends codes"]
 
-    subgraph PG["PostgreSQL: one schema per service"]
+    subgraph PG["PostgreSQL: one database per service"]
         AuthDB[("auth schema<br/>users, refresh tokens")]
         SocialDB[("social schema")]
         StatsDB[("stats schema")]
