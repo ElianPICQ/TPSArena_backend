@@ -1,9 +1,9 @@
 """Parties and invites, stored in Redis:
 
-    party:{party_id}            hash    leader_id, status (lobby | launching | in_match), version, created_at, server_id
-    party:{party_id}:members    set     up to 8 user ids
-    user:{user_id}:party        string  party_id (one party per player)
-    invite:{invite_id}          hash    party_id, from, to   (TTL 60 s)
+    social:party:{party_id}            hash    leader_id, status (lobby | launching | in_match), version, created_at, server_id
+    social:party:{party_id}:members    set     up to 8 user ids
+    social:user:{user_id}:party        string  party_id (one party per player)
+    social:invite:{invite_id}          hash    party_id, from, to   (TTL 60 s)
 
 Every change runs as one Lua script and bumps `version`, which party.updated carries so
 consumers can ignore snapshots that arrive out of order.
@@ -20,19 +20,19 @@ from social.redis_client import publish_event, redis
 
 
 def party_key(party_id: str) -> str:
-    return f"party:{party_id}"
+    return f"social:party:{party_id}"
 
 
 def members_key(party_id: str) -> str:
-    return f"party:{party_id}:members"
+    return f"social:party:{party_id}:members"
 
 
 def user_party_key(user_id: uuid.UUID | str) -> str:
-    return f"user:{user_id}:party"
+    return f"social:user:{user_id}:party"
 
 
 def invite_key(invite_id: str) -> str:
-    return f"invite:{invite_id}"
+    return f"social:invite:{invite_id}"
 
 
 def new_party_id() -> str:

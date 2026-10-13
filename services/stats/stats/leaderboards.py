@@ -1,4 +1,4 @@
-"""All-time leaderboards, cached in Redis sorted sets: leaderboard:{type} -> user_id scored by total.
+"""All-time leaderboards, cached in Redis sorted sets: stats:leaderboard:{type} -> user_id scored by total.
 
 PostgreSQL holds the truth. The worker writes absolute totals after each match (so handling an
 event twice changes nothing), and the API rebuilds a board from PostgreSQL if Redis lost it.
@@ -21,11 +21,11 @@ class LeaderboardType(StrEnum):
     kills = "kills"
 
 
-BUILT_MARKER = "leaderboards:built"
+BUILT_MARKER = "stats:leaderboards:built"
 
 
 def board_key(board: LeaderboardType) -> str:
-    return f"leaderboard:{board}"
+    return f"stats:leaderboard:{board}"
 
 
 async def update_player(stats: PlayerStats) -> None:

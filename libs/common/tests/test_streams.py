@@ -1,8 +1,7 @@
-"""Needs Redis from docker compose. Uses database 13."""
-
 import uuid
 
 import pytest
+from testcontainers.community.redis import RedisContainer
 
 from tpsarena_common.events import UserDeleted, encode, publish
 from tpsarena_common.streams import StreamConsumer, consumer_redis
@@ -10,16 +9,22 @@ from tpsarena_common.streams import StreamConsumer, consumer_redis
 STREAM = UserDeleted.STREAM
 
 
+@pytest.fixture(scope="session")
+def redis_url():
+    with RedisContainer("redis:7") as container:
+        yield f"redis://{container.get_container_host_ip()}:{container.get_exposed_port(6379)}/0"
+
+
 @pytest.fixture
-async def redis():
-    client = consumer_redis("redis://localhost:6379/13", block_ms=100)
+async def redis(redis_url):
+    client = consumer_redis(redis_url, block_ms=100)
     await client.flushdb()
     yield client
     await client.aclose()
 
 
 def make_consumer(redis, handler, **kwargs) -> StreamConsumer:
-    return StreamConsumer(redis, "test-group", [STREAM], handler, consumer="c1", block_ms=100, **kwargs)
+    return StreamConsumer(redis, "test", "test-group", [STREAM], handler, consumer="c1", block_ms=100, **kwargs)
 
 
 async def test_handles_and_acks(redis):
@@ -51,6 +56,7 @@ async def test_skips_duplicate_event_ids(redis):
     await redis.xadd(STREAM, encode(e))  # e.g. the publisher retried
     await consumer.poll_once()
     assert seen == [e]
+    assert await redis.exists(f"test:handled:test-group:{e.event_id}")
 
 
 async def test_failed_handler_is_retried_by_reclaim(redis):

@@ -52,7 +52,7 @@ async def handle(event: Event) -> None:
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     settings = get_settings()
-    consumer = StreamConsumer(consumer_redis(settings.redis_url), "auth-worker", [settings.emails_stream], handle)
+    consumer = StreamConsumer(consumer_redis(settings.redis_url), "auth", "auth-worker", [settings.emails_stream], handle)
     asyncio.run(consumer.run())
 
 

@@ -43,7 +43,7 @@ async def handle(event: Event) -> None:
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-    consumer = StreamConsumer(consumer_redis(get_settings().redis_url), "social", STREAMS, handle)
+    consumer = StreamConsumer(consumer_redis(get_settings().redis_url), "social", "social", STREAMS, handle)
     asyncio.run(consumer.run())
 
 

@@ -3,7 +3,8 @@
 - One consumer group per consuming service; instances of a service share it.
 - XACK after handling. A failed event stays pending and is retried: XAUTOCLAIM takes over
   messages pending for longer than `claim_idle_ms` (from crashed consumers or failed handlers).
-- Delivery is at least once: event ids already handled are skipped.
+- Delivery is at least once: event ids already handled are skipped. The "handled" markers are
+  stored under the service's own key prefix (e.g. `social:handled:...`), like all its keys.
 - Events that can't be decoded are logged and acknowledged, so they don't block the group.
 """
 
@@ -32,6 +33,7 @@ class StreamConsumer:
     def __init__(
         self,
         redis: Redis,
+        key_prefix: str,
         group: str,
         streams: list[str],
         handler: Handler,
@@ -41,6 +43,7 @@ class StreamConsumer:
         handled_ttl_seconds: int = 7 * 24 * 3600,
     ):
         self.redis = redis
+        self.key_prefix = key_prefix
         self.group = group
         self.streams = streams
         self.handler = handler
@@ -65,7 +68,7 @@ class StreamConsumer:
             await self.redis.xack(stream, self.group, message_id)
             return
 
-        handled_key = f"handled:{self.group}:{e.event_id}"
+        handled_key = f"{self.key_prefix}:handled:{self.group}:{e.event_id}"
         if not await self.redis.exists(handled_key):
             try:
                 await self.handler(e)
