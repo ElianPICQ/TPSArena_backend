@@ -68,6 +68,8 @@ collection with the `Local` environment, or run `npx @usebruno/cli run --env Loc
 It creates two players, reads their codes from Mailpit, goes through friends, a party launch, a
 match and stats, and deletes both accounts at the end.
 
+To read the tables, see [`DATABASES.md`](DATABASES.md).
+
 Each service can also run alone, with its own database and Redis, from its own folder. Run
 `docker compose --profile standalone up --build` there. Its README has the details.
 
