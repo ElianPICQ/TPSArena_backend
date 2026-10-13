@@ -1,0 +1,10 @@
+# Full stack only: stats also waits for the shared Redis (infra/compose.yaml).
+services:
+  stats:
+    depends_on:
+      redis:
+        condition: service_healthy
+  stats-worker:
+    depends_on:
+      redis:
+        condition: service_healthy

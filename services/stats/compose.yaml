@@ -1,0 +1,57 @@
+# Stats alone:  docker compose --profile standalone up --build   (own Postgres and Redis)
+# In the full stack this file is included by the root docker-compose.yml (shared Redis, root .env).
+services:
+  stats:
+    build: &build
+      context: .
+      ssh: [default]
+    restart: unless-stopped
+    environment: &env
+      DATABASE_URL: postgresql+asyncpg://stats_svc:${STATS_DB_PASSWORD:-stats_dev_password}@stats-db:5432/stats
+      REDIS_URL: ${STATS_REDIS_URL:-redis://stats-redis:6379/0}
+      AUTH_JWKS_URL: ${AUTH_JWKS_URL:-http://host.docker.internal:8001/.well-known/jwks.json}
+    extra_hosts: &hosts
+      - "host.docker.internal:host-gateway"  # reach services running on the host when alone
+    ports:
+      - "8004:8004"  # dev only: in the full stack, clients go through the BFF
+    depends_on: &depends
+      stats-db:
+        condition: service_healthy
+      stats-redis:
+        condition: service_healthy
+        required: false
+
+  stats-worker:
+    build: *build
+    command: ["python", "-m", "stats.worker"]
+    restart: unless-stopped
+    environment: *env
+    extra_hosts: *hosts
+    depends_on: *depends
+
+  stats-db:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: stats_svc
+      POSTGRES_PASSWORD: ${STATS_DB_PASSWORD:-stats_dev_password}
+      POSTGRES_DB: stats
+    volumes:
+      - stats-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U stats_svc -d stats"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  stats-redis:
+    profiles: [standalone]
+    image: redis:7
+    command: ["redis-server", "--appendonly", "yes"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  stats-db-data:

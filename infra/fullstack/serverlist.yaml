@@ -1,0 +1,7 @@
+# Full stack only: serverlist also waits for the shared Redis (infra/compose.yaml).
+services:
+  serverlist:
+    depends_on:
+      redis:
+        condition: service_healthy
+

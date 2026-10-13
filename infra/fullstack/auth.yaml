@@ -1,0 +1,10 @@
+# Full stack only: auth also waits for the shared Redis (infra/compose.yaml).
+services:
+  auth:
+    depends_on:
+      redis:
+        condition: service_healthy
+  auth-worker:
+    depends_on:
+      redis:
+        condition: service_healthy

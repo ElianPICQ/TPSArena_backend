@@ -1,0 +1,29 @@
+# Auth / Users API
+
+Registration, email verification, login, tokens (JWT + refresh), password reset, account deletion, name lookup, JWKS. A worker (`python -m auth.worker`) sends the code emails.
+
+Port 8001. Owns: PostgreSQL database `auth`, Redis keys `auth:*`, Mailpit (dev).
+
+## Run it alone
+```
+cp .env.example .env   # optional: the defaults work for local development
+docker compose --profile standalone up --build
+```
+First time: `uv run python scripts/gen_keys.py` creates the JWT signing key in `keys/` (git-ignored).
+Building the image downloads `tpsarena-common` from the private GitHub repo through your SSH
+agent: run `ssh-add` once per session if `ssh-add -l` lists no key.
+
+## Tests
+`uv run pytest` — starts throwaway PostgreSQL/Redis containers (Docker must be running), nothing else needed.
+
+## In the full stack
+The root `docker-compose.yml` includes this folder's `compose.yaml` and supplies the shared Redis
+(with this service's ACL user) and the other services' addresses from the root `.env`.
+
+## Upgrading tpsarena-common
+The shared package comes from a git tag of this repo (`[tool.uv.sources]` in `pyproject.toml`).
+1. Change `tag = "common-vX.Y.Z"` to the new release (see `libs/common/CHANGELOG.md`).
+2. `uv lock`, then run the tests.
+
+To try an unreleased change of `libs/common` without releasing it:
+`uv run --with-editable ../../libs/common pytest`.

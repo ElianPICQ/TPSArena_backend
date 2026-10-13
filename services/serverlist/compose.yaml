@@ -1,0 +1,31 @@
+# Server List alone:  docker compose --profile standalone up --build   (own Redis)
+# In the full stack this file is included by the root docker-compose.yml (shared Redis, root .env).
+services:
+  serverlist:
+    build:
+      context: .
+      ssh: [default]
+    restart: unless-stopped
+    environment:
+      REDIS_URL: ${SERVERLIST_REDIS_URL:-redis://serverlist-redis:6379/0}
+      AUTH_JWKS_URL: ${AUTH_JWKS_URL:-http://host.docker.internal:8001/.well-known/jwks.json}
+      GAME_SERVER_SECRET: ${GAME_SERVER_SECRET:-change-me-dev-game-server-secret}
+      SOCIAL_SERVICE_SECRET: ${SOCIAL_SERVICE_SECRET:-change-me-dev-social-service-secret}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"  # reach services running on the host when alone
+    ports:
+      - "8002:8002"  # game servers on the host register here
+    depends_on:
+      serverlist-redis:
+        condition: service_healthy
+        required: false
+
+  serverlist-redis:
+    profiles: [standalone]
+    image: redis:7
+    command: ["redis-server", "--appendonly", "yes"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 30

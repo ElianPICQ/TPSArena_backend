@@ -1,0 +1,69 @@
+# Auth alone:      docker compose --profile standalone up --build   (own Postgres, Redis, Mailpit)
+# In the full stack this file is included by the root docker-compose.yml, which provides the
+# shared Redis and the variables below (root .env).
+services:
+  auth:
+    build: &build
+      context: .
+      ssh: [default]
+    restart: unless-stopped
+    environment: &env
+      DATABASE_URL: postgresql+asyncpg://auth_svc:${AUTH_DB_PASSWORD:-auth_dev_password}@auth-db:5432/auth
+      REDIS_URL: ${AUTH_REDIS_URL:-redis://auth-redis:6379/0}
+      JWT_PRIVATE_KEY_PATH: /keys/jwt_private.pem
+      CODE_SECRET: ${CODE_SECRET:-change-me-dev-code-secret}
+      SMTP_HOST: ${SMTP_HOST:-mailpit}
+      SMTP_PORT: ${SMTP_PORT:-1025}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-no-reply@tpsarena.local}
+      SMTP_STARTTLS: ${SMTP_STARTTLS:-false}
+    volumes:
+      - ./keys:/keys:ro
+    ports:
+      - "8001:8001"  # dev only: in the full stack, clients go through the BFF
+    depends_on: &depends
+      auth-db:
+        condition: service_healthy
+      auth-redis:
+        condition: service_healthy
+        required: false
+
+  auth-worker:
+    build: *build
+    command: ["python", "-m", "auth.worker"]
+    restart: unless-stopped
+    environment: *env
+    depends_on: *depends
+
+  auth-db:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: auth_svc
+      POSTGRES_PASSWORD: ${AUTH_DB_PASSWORD:-auth_dev_password}
+      POSTGRES_DB: auth
+    volumes:
+      - auth-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U auth_svc -d auth"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  mailpit:
+    image: axllent/mailpit
+    ports:
+      - "8025:8025"  # web inbox
+
+  auth-redis:
+    profiles: [standalone]
+    image: redis:7
+    command: ["redis-server", "--appendonly", "yes"]
+    healthcheck: &redis-health
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  auth-db-data:

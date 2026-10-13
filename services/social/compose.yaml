@@ -1,0 +1,60 @@
+# Social alone:  docker compose --profile standalone up --build   (own Postgres and Redis)
+# In the full stack this file is included by the root docker-compose.yml (shared Redis, root .env).
+services:
+  social:
+    build: &build
+      context: .
+      ssh: [default]
+    restart: unless-stopped
+    environment: &env
+      DATABASE_URL: postgresql+asyncpg://social_svc:${SOCIAL_DB_PASSWORD:-social_dev_password}@social-db:5432/social
+      REDIS_URL: ${SOCIAL_REDIS_URL:-redis://social-redis:6379/0}
+      AUTH_JWKS_URL: ${AUTH_JWKS_URL:-http://host.docker.internal:8001/.well-known/jwks.json}
+      AUTH_URL: ${AUTH_URL:-http://host.docker.internal:8001}
+      SERVERLIST_URL: ${SERVERLIST_URL:-http://host.docker.internal:8002}
+      SOCIAL_SERVICE_SECRET: ${SOCIAL_SERVICE_SECRET:-change-me-dev-social-service-secret}
+    extra_hosts: &hosts
+      - "host.docker.internal:host-gateway"  # reach services running on the host when alone
+    ports:
+      - "8003:8003"  # dev only: in the full stack, clients go through the BFF
+    depends_on: &depends
+      social-db:
+        condition: service_healthy
+      social-redis:
+        condition: service_healthy
+        required: false
+
+  social-worker:
+    build: *build
+    command: ["python", "-m", "social.worker"]
+    restart: unless-stopped
+    environment: *env
+    extra_hosts: *hosts
+    depends_on: *depends
+
+  social-db:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: social_svc
+      POSTGRES_PASSWORD: ${SOCIAL_DB_PASSWORD:-social_dev_password}
+      POSTGRES_DB: social
+    volumes:
+      - social-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U social_svc -d social"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  social-redis:
+    profiles: [standalone]
+    image: redis:7
+    command: ["redis-server", "--appendonly", "yes"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  social-db-data:
