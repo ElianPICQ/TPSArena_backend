@@ -33,3 +33,15 @@ To run a single query without opening the shell:
 ```sh
 docker compose exec auth-db psql -U auth_svc -d auth -c "SELECT username, created_at FROM auth.users;"
 ```
+
+## Resetting every database
+
+To start over with empty databases, remove the data volumes and start the stack again from
+the repository root. This deletes every user, profile, match and chat message, and the Redis
+state (sessions, parties, leaderboards, stream progress). The services recreate their tables
+at startup.
+
+```sh
+docker compose down -v
+docker compose up -d
+```
