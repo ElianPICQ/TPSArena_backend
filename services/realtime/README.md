@@ -9,7 +9,7 @@ Port 8005: WebSocket at `/ws` (game clients connect directly), plus `GET /presen
 
 Owns: PostgreSQL database `realtime` (schema `chat`: friend messages, kept 90 days), Redis keys and
 Pub/Sub channels `realtime:*`. Consumes `social.events`, `stats.progress`, `player.match`,
-`user.deleted`; publishes `presence.changed`.
+`user.deleted`, `auth.sessions`, `serverlist.events`; publishes `presence.changed`.
 
 ## Run it alone
 ```
