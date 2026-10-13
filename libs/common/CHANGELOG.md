@@ -5,6 +5,8 @@ Services pin a released version (git tag `common-vX.Y.Z`). Add changes under "Un
 
 ## Unreleased
 
+## 0.3.0 (2026-10-13)
+
 - Transactional outbox (`outbox.Outbox`, `outbox.outbox_table`), with the `outbox` extra
   (SQLAlchemy): events are written in the same transaction as the change and published from
   there, so they can't be lost between the commit and the publish.
