@@ -1105,7 +1105,7 @@ requires-dist = [
     { name = "pydantic-settings", specifier = ">=2.6" },
     { name = "redis", specifier = ">=5.2" },
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.36" },
-    { name = "tpsarena-common", extras = ["outbox"], git = "ssh://git@github.com/ElianPICQ/TSArena_backend.git?subdirectory=libs%2Fcommon&tag=common-v0.3.0" },
+    { name = "tpsarena-common", extras = ["outbox"], git = "ssh://git@github.com/ElianPICQ/TPSArena_backend.git?subdirectory=libs%2Fcommon&tag=common-v0.3.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.32" },
 ]
 
@@ -1141,7 +1141,7 @@ redis = [
 [[package]]
 name = "tpsarena-common"
 version = "0.3.0"
-source = { git = "ssh://git@github.com/ElianPICQ/TSArena_backend.git?subdirectory=libs%2Fcommon&tag=common-v0.3.0#f2582a9004f3be511a4097e9c9840fa1e1349d63" }
+source = { git = "ssh://git@github.com/ElianPICQ/TPSArena_backend.git?subdirectory=libs%2Fcommon&tag=common-v0.3.0#f2582a9004f3be511a4097e9c9840fa1e1349d63" }
 dependencies = [
     { name = "fastapi" },
     { name = "httpx" },
