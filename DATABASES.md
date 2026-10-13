@@ -45,3 +45,27 @@ at startup.
 docker compose down -v
 docker compose up -d
 ```
+
+## Resetting a single database
+
+To empty one service's database and keep the others, stop that service and its database,
+remove the database container and its volume, then start the stack again. The service
+recreates its tables at startup.
+
+```sh
+docker compose stop auth auth-worker auth-db
+docker compose rm -f auth-db
+docker volume rm tpsarena_auth-db-data
+docker compose up -d
+```
+
+| Database | Containers to stop | Volume |
+|---|---|---|
+| `auth` | `auth auth-worker auth-db` | `tpsarena_auth-db-data` |
+| `social` | `social social-worker social-db` | `tpsarena_social-db-data` |
+| `stats` | `stats stats-worker stats-db` | `tpsarena_stats-db-data` |
+| `realtime` | `realtime realtime-db` | `tpsarena_realtime-db-data` |
+
+The other services keep their data about the deleted players. For example, emptying `auth`
+leaves those players' friends, stats and messages in the other databases, under user ids that
+no longer exist. To start over cleanly, reset every database (above).
