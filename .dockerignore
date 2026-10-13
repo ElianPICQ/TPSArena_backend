@@ -1,0 +1,7 @@
+# For images built from the repository root (services that use libs/).
+**/.venv
+**/__pycache__
+**/.pytest_cache
+**/tests
+.env
+keys

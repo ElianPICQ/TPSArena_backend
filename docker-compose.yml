@@ -1,0 +1,163 @@
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      AUTH_DB_PASSWORD: ${AUTH_DB_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./infra/postgres/init.sh:/docker-entrypoint-initdb.d/init.sh:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  redis:
+    image: redis:7
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  mailpit:
+    image: axllent/mailpit
+    ports:
+      - "8025:8025"  # web inbox
+      - "1025:1025"  # SMTP
+
+  auth:
+    build: &auth-build
+      context: .
+      dockerfile: services/auth/Dockerfile
+    environment: &auth-env
+      DATABASE_URL: postgresql+asyncpg://auth_svc:${AUTH_DB_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      REDIS_URL: redis://redis:6379/0
+      JWT_PRIVATE_KEY_PATH: /keys/jwt_private.pem
+      CODE_SECRET: ${CODE_SECRET}
+      SMTP_HOST: ${SMTP_HOST}
+      SMTP_PORT: ${SMTP_PORT}
+      SMTP_USER: ${SMTP_USER}
+      SMTP_PASSWORD: ${SMTP_PASSWORD}
+      SMTP_FROM: ${SMTP_FROM}
+      SMTP_STARTTLS: ${SMTP_STARTTLS}
+    restart: unless-stopped
+    volumes:
+      - ./keys:/keys:ro
+    # Not published: only the BFF talks to Auth (it trusts X-Forwarded-For from the BFF).
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  auth-worker:
+    build: *auth-build
+    command: ["python", "-m", "auth.worker"]
+    restart: unless-stopped
+    environment: *auth-env
+    depends_on:
+      redis:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
+
+  serverlist:
+    build:
+      context: .
+      dockerfile: services/serverlist/Dockerfile
+    restart: unless-stopped
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      AUTH_JWKS_URL: http://auth:8001/.well-known/jwks.json
+      GAME_SERVER_SECRET: ${GAME_SERVER_SECRET}
+      SOCIAL_SERVICE_SECRET: ${SOCIAL_SERVICE_SECRET}
+    ports:
+      - "8002:8002"  # published so a headless Godot server running on the host can register
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  social:
+    build: &social-build
+      context: .
+      dockerfile: services/social/Dockerfile
+    restart: unless-stopped
+    environment: &social-env
+      DATABASE_URL: postgresql+asyncpg://social_svc:${SOCIAL_DB_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      REDIS_URL: redis://redis:6379/0
+      AUTH_URL: http://auth:8001
+      AUTH_JWKS_URL: http://auth:8001/.well-known/jwks.json
+      SERVERLIST_URL: http://serverlist:8002
+      SOCIAL_SERVICE_SECRET: ${SOCIAL_SERVICE_SECRET}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  social-worker:
+    build: *social-build
+    command: ["python", "-m", "social.worker"]
+    restart: unless-stopped
+    environment: *social-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  stats:
+    build: &stats-build
+      context: .
+      dockerfile: services/stats/Dockerfile
+    restart: unless-stopped
+    environment: &stats-env
+      DATABASE_URL: postgresql+asyncpg://stats_svc:${STATS_DB_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      REDIS_URL: redis://redis:6379/0
+      AUTH_JWKS_URL: http://auth:8001/.well-known/jwks.json
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  stats-worker:
+    build: *stats-build
+    command: ["python", "-m", "stats.worker"]
+    restart: unless-stopped
+    environment: *stats-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  bff:
+    build: ./services/bff
+    environment:
+      AUTH_URL: http://auth:8001
+      SERVERLIST_URL: http://serverlist:8002
+      SOCIAL_URL: http://social:8003
+      STATS_URL: http://stats:8004
+    ports:
+      - "8000:8000"
+    depends_on:
+      - auth
+      - serverlist
+      - social
+      - stats
+
+volumes:
+  postgres-data:
+  redis-data:

@@ -1,0 +1,29 @@
+[project]
+name = "tpsarena-common"
+version = "0.1.0"
+description = "Shared code for the TPSArena Python services: JWT verification, event models, stream consumer base"
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi>=0.115",
+    "httpx>=0.28",
+    "pyjwt[crypto]>=2.10",
+    "pydantic>=2.9",
+    "redis>=5.2",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "respx>=0.21",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["tpsarena_common"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"

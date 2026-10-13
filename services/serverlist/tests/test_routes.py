@@ -1,0 +1,270 @@
+import uuid
+
+import httpx
+
+from serverlist.config import get_settings
+from serverlist.redis_client import ACTIVE_SERVERS, redis, server_key, server_tickets_key
+
+from .conftest import GAME_SERVER, SOCIAL, player
+
+BUILD = "0.1.0"
+
+
+async def register(client: httpx.AsyncClient, **overrides) -> str:
+    body = {
+        "name": "EU #1",
+        "address": "203.0.113.10",
+        "port": 7000,
+        "region": "eu",
+        "map": "arena",
+        "build_version": BUILD,
+        **overrides,
+    }
+    r = await client.post("/servers", json=body, headers=GAME_SERVER)
+    assert r.status_code == 201, r.text
+    return r.json()["server_id"]
+
+
+async def heartbeat(client: httpx.AsyncClient, server_id: str, status: str, players: int = 0) -> httpx.Response:
+    body = {"status": status, "players": players, "map": "arena"}
+    return await client.put(f"/servers/{server_id}/heartbeat", json=body, headers=GAME_SERVER)
+
+
+async def allocate(client: httpx.AsyncClient, members: list[uuid.UUID], **overrides) -> httpx.Response:
+    body = {"party_id": str(uuid.uuid4()), "member_ids": [str(m) for m in members], "build_version": BUILD}
+    return await client.post("/allocations", json={**body, **overrides}, headers=SOCIAL)
+
+
+async def list_servers(client: httpx.AsyncClient, build: str = BUILD) -> list[dict]:
+    r = await client.get("/servers", params={"build_version": build}, headers=player())
+    assert r.status_code == 200
+    return r.json()["servers"]
+
+
+async def verify(client: httpx.AsyncClient, ticket: str, server_id: str) -> httpx.Response:
+    return await client.post("/tickets/verify", json={"ticket": ticket, "server_id": server_id}, headers=GAME_SERVER)
+
+
+# --- Authentication ---
+
+
+async def test_game_server_routes_need_the_secret(client):
+    body = {"name": "x", "address": "a", "port": 1, "region": "eu", "map": "m", "build_version": BUILD}
+    assert (await client.post("/servers", json=body)).status_code == 401
+    r = await client.post("/servers", json=body, headers={"authorization": "Bearer wrong"})
+    assert r.status_code == 401
+    assert r.json()["error"] == "invalid_secret"
+    # The social secret isn't a game server secret.
+    assert (await client.post("/servers", json=body, headers=SOCIAL)).status_code == 401
+
+
+async def test_allocations_need_the_social_secret(client):
+    r = await client.post("/allocations", json={}, headers=GAME_SERVER)
+    assert r.status_code == 401
+
+
+async def test_player_routes_need_a_token(client):
+    r = await client.get("/servers", params={"build_version": BUILD})
+    assert r.status_code == 401
+    assert r.json()["error"] == "not_authenticated"
+
+
+# --- Registry ---
+
+
+async def test_register_heartbeat_deregister(client):
+    server_id = await register(client)
+    r = await heartbeat(client, server_id, "idle", players=0)
+    assert r.status_code == 200
+    assert r.json() == {"status": "idle", "party_id": None, "reserved_slots": 0}
+
+    r = await client.delete(f"/servers/{server_id}", headers=GAME_SERVER)
+    assert r.status_code == 204
+    assert (await heartbeat(client, server_id, "idle")).status_code == 404
+
+
+async def test_register_rejects_more_than_8_players(client):
+    body = {"name": "x", "address": "a", "port": 1, "region": "eu", "map": "m", "build_version": BUILD, "max_players": 9}
+    assert (await client.post("/servers", json=body, headers=GAME_SERVER)).status_code == 422
+
+
+async def test_server_cannot_reserve_itself(client):
+    server_id = await register(client)
+    r = await heartbeat(client, server_id, "reserved")
+    assert r.status_code == 400
+
+
+async def test_expired_server_must_register_again(client):
+    server_id = await register(client)
+    await redis.delete(server_key(server_id))  # what the 15 s TTL does
+    r = await heartbeat(client, server_id, "idle")
+    assert r.status_code == 404
+    assert r.json()["error"] == "server_not_found"
+
+
+# --- Public list ---
+
+
+async def test_list_shows_only_joinable_matches(client):
+    idle = await register(client, name="idle")
+    full = await register(client, name="full")
+    open_ = await register(client, name="open")
+    other_build = await register(client, name="other build", build_version="0.0.9")
+    await heartbeat(client, idle, "idle")
+    await heartbeat(client, full, "in_progress", players=8)
+    await heartbeat(client, open_, "in_progress", players=3)
+    await heartbeat(client, other_build, "in_progress", players=1)
+
+    servers = await list_servers(client)
+    assert [s["name"] for s in servers] == ["open"]
+    assert "address" not in servers[0]  # only given with a ticket
+    assert [s["name"] for s in await list_servers(client, "0.0.9")] == ["other build"]
+
+
+async def test_list_hides_stale_servers(client):
+    server_id = await register(client)
+    await heartbeat(client, server_id, "in_progress", players=1)
+    await redis.zadd(ACTIVE_SERVERS, {server_id: 0})  # last heartbeat long ago
+    assert await list_servers(client) == []
+
+
+# --- Party allocation ---
+
+
+async def test_allocation_reserves_server_with_one_ticket_per_member(client):
+    server_id = await register(client)
+    members = [uuid.uuid4() for _ in range(3)]
+    r = await allocate(client, members)
+    assert r.status_code == 201
+    allocation = r.json()
+    assert allocation["server_id"] == server_id
+    assert (allocation["address"], allocation["port"]) == ("203.0.113.10", 7000)
+    assert set(allocation["tickets"]) == {str(m) for m in members}
+
+    # The game server learns about the party from its next heartbeat, even if it still says idle.
+    r = await heartbeat(client, server_id, "idle")
+    assert r.json()["status"] == "reserved"
+    assert r.json()["reserved_slots"] == 3
+    assert r.json()["party_id"]
+
+    # Reserved servers aren't in the public list and can't be allocated twice.
+    await heartbeat(client, server_id, "idle")
+    assert await list_servers(client) == []
+    assert (await allocate(client, [uuid.uuid4()])).status_code == 503
+
+
+async def test_allocation_without_idle_server(client):
+    r = await allocate(client, [uuid.uuid4()])
+    assert r.status_code == 503
+    assert r.json()["error"] == "no_server_available"
+
+
+async def test_allocation_matches_build_and_region(client):
+    await register(client, build_version="0.0.9")
+    eu = await register(client, region="eu")
+    us = await register(client, region="us")
+    assert (await allocate(client, [uuid.uuid4()], region="us")).json()["server_id"] == us
+    assert (await allocate(client, [uuid.uuid4()], region="eu")).json()["server_id"] == eu
+    assert (await allocate(client, [uuid.uuid4()])).status_code == 503
+
+
+async def test_allocation_rejects_party_over_8(client):
+    await register(client)
+    r = await allocate(client, [uuid.uuid4() for _ in range(9)])
+    assert r.status_code == 400
+    assert r.json()["error"] == "party_too_large"
+
+
+async def test_reserved_server_returns_to_idle_after_reservation_window(client, monkeypatch):
+    monkeypatch.setattr(get_settings(), "reservation_seconds", 0)
+    server_id = await register(client)
+    await allocate(client, [uuid.uuid4()])
+    r = await heartbeat(client, server_id, "idle")
+    assert r.json() == {"status": "idle", "party_id": None, "reserved_slots": 0}
+
+
+async def test_party_flow_into_public_list(client):
+    server_id = await register(client)
+    members = [uuid.uuid4() for _ in range(2)]
+    tickets = (await allocate(client, members)).json()["tickets"]
+
+    for user_id, ticket in tickets.items():
+        r = await verify(client, ticket, server_id)
+        assert r.status_code == 200
+        assert r.json()["user_id"] == user_id
+
+    r = await heartbeat(client, server_id, "in_progress", players=2)
+    assert r.json()["status"] == "in_progress"
+    assert r.json()["reserved_slots"] == 0
+    assert [s["server_id"] for s in await list_servers(client)] == [server_id]
+
+    # Match over: back to idle, ready for the next party.
+    r = await heartbeat(client, server_id, "idle", players=0)
+    assert r.json() == {"status": "idle", "party_id": None, "reserved_slots": 0}
+
+
+# --- Join tickets and verification ---
+
+
+async def test_stranger_joins_match_in_progress(client):
+    server_id = await register(client)
+    await heartbeat(client, server_id, "in_progress", players=3)
+    user_id = uuid.uuid4()
+
+    r = await client.post(f"/servers/{server_id}/join-ticket", headers=player(user_id))
+    assert r.status_code == 201
+    joined = r.json()
+    assert (joined["address"], joined["port"], joined["expires_in"]) == ("203.0.113.10", 7000, 30)
+
+    r = await verify(client, joined["ticket"], server_id)
+    assert r.json()["user_id"] == str(user_id)
+    # Single use.
+    assert (await verify(client, joined["ticket"], server_id)).status_code == 401
+
+
+async def test_ticket_only_works_on_its_server(client):
+    server_id = await register(client)
+    other_id = await register(client)
+    await heartbeat(client, server_id, "in_progress", players=1)
+    ticket = (await client.post(f"/servers/{server_id}/join-ticket", headers=player())).json()["ticket"]
+
+    r = await verify(client, ticket, other_id)
+    assert r.status_code == 401
+    assert r.json()["error"] == "invalid_ticket"
+    # Shown to the wrong server, it's burnt.
+    assert (await verify(client, ticket, server_id)).status_code == 401
+
+
+async def test_unused_tickets_hold_slots(client):
+    server_id = await register(client)
+    await heartbeat(client, server_id, "in_progress", players=6)
+
+    for _ in range(2):
+        r = await client.post(f"/servers/{server_id}/join-ticket", headers=player())
+        assert r.status_code == 201
+    # 6 players + 2 pending tickets = 8: full, and gone from the list.
+    r = await client.post(f"/servers/{server_id}/join-ticket", headers=player())
+    assert r.status_code == 409
+    assert r.json()["error"] == "server_full"
+    assert await list_servers(client) == []
+
+
+async def test_expired_tickets_free_their_slot(client):
+    server_id = await register(client)
+    await heartbeat(client, server_id, "in_progress", players=7)
+    ticket = (await client.post(f"/servers/{server_id}/join-ticket", headers=player())).json()["ticket"]
+    assert (await client.post(f"/servers/{server_id}/join-ticket", headers=player())).status_code == 409
+
+    await redis.zadd(server_tickets_key(server_id), {ticket: 0})  # what 30 s without using it does
+    r = await client.post(f"/servers/{server_id}/join-ticket", headers=player())
+    assert r.status_code == 201
+
+
+async def test_cannot_join_idle_or_reserved_server(client):
+    server_id = await register(client)
+    r = await client.post(f"/servers/{server_id}/join-ticket", headers=player())
+    assert r.status_code == 409
+    assert r.json()["error"] == "not_joinable"
+
+    r = await client.post(f"/servers/{uuid.uuid4()}/join-ticket", headers=player())
+    assert r.status_code == 404
