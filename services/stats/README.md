@@ -1,6 +1,6 @@
 # Stats API
 
-Match results, match history, player stats, progression (XP, levels, achievements), leaderboards. A worker (`python -m stats.worker`) records `match.finished` and handles `user.deleted`.
+Match results, match history, player stats, progression (XP, levels, achievements), leaderboards. A worker (`python -m stats.worker`) records `match.finished`, handles `user.deleted` and publishes progress events left in the outbox.
 
 Port 8004. Owns: PostgreSQL database `stats`, Redis keys `stats:*`.
 

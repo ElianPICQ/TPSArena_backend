@@ -8,6 +8,7 @@ import { TokenError, type Verifier } from "./jwt.js";
 import { log } from "./log.js";
 import type { Presence } from "./presence.js";
 import { CloseCode, type ServerMessage } from "./protocol.js";
+import { issuedBefore, type Revocations } from "./revocations.js";
 import { fetchFriends, SocialUnavailable } from "./social.js";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -20,12 +21,14 @@ export interface HubDeps {
   friendMessages: FriendMessages;
   partyChat: PartyChat;
   bus: Bus;
+  revocations: Revocations;
 }
 
 export class Connection {
   userId: string | null = null;
   token = "";
   expiresAt = 0;
+  issuedAt = 0;
   friends = new Set<string>();
   private queue: Promise<void> = Promise.resolve();
   private sentAt: number[] = [];
@@ -134,10 +137,13 @@ export class Hub {
   }
 
   private async authenticate(conn: Connection, token: string): Promise<void> {
-    const { verify, config, presence, friendMessages, announcer } = this.deps;
+    const { verify, config, presence, friendMessages, announcer, revocations } = this.deps;
     let verified;
     try {
       verified = await verify(token);
+      if (await revocations.isRevoked(verified.userId, verified.issuedAt)) {
+        throw new TokenError("session_revoked", "This session was ended (password reset), log in again.");
+      }
     } catch (error) {
       if (!(error instanceof TokenError)) throw error;
       conn.error(error.code, error.message);
@@ -154,6 +160,7 @@ export class Hub {
       }
       conn.token = token;
       conn.expiresAt = verified.expiresAt;
+      conn.issuedAt = verified.issuedAt;
       return;
     }
 
@@ -175,6 +182,7 @@ export class Hub {
     conn.userId = verified.userId;
     conn.token = token;
     conn.expiresAt = verified.expiresAt;
+    conn.issuedAt = verified.issuedAt;
     addTo(this.byUser, conn.userId, conn);
     for (const friend of friends) this.addFriend(conn, friend);
 
@@ -313,7 +321,10 @@ export class Hub {
         return;
       }
       case "close":
-        for (const conn of this.byUser.get(message.userId) ?? []) conn.ws.close(message.code, message.reason);
+        for (const conn of this.byUser.get(message.userId) ?? []) {
+          if (message.issuedBefore !== undefined && !issuedBefore(conn.issuedAt, message.issuedBefore)) continue;
+          conn.ws.close(message.code, message.reason);
+        }
         return;
     }
   }

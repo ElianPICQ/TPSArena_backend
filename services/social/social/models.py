@@ -3,6 +3,7 @@ from datetime import datetime
 
 from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, MetaData, String, UniqueConstraint, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from tpsarena_common.outbox import outbox_table
 
 
 class Base(DeclarativeBase):
@@ -44,3 +45,7 @@ class Friendship(Base):
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("players.user_id", ondelete="CASCADE"), primary_key=True)
     friend_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("players.user_id", ondelete="CASCADE"), primary_key=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+# Events waiting to be published (see tpsarena_common.outbox).
+Outbox = outbox_table(Base.metadata)

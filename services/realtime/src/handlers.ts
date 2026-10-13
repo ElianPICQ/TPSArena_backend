@@ -6,8 +6,9 @@ import type { FriendMessages, PartyChat } from "./chat.js";
 import type { AnyEvent } from "./events.js";
 import type { Presence } from "./presence.js";
 import { CloseCode } from "./protocol.js";
+import type { Revocations } from "./revocations.js";
 
-export const STREAMS = ["social.events", "stats.progress", "player.match", "user.deleted"];
+export const STREAMS = ["social.events", "stats.progress", "player.match", "user.deleted", "auth.sessions", "serverlist.events"];
 
 export interface HandlerDeps {
   bus: Bus;
@@ -15,10 +16,11 @@ export interface HandlerDeps {
   announcer: Announcer;
   friendMessages: FriendMessages;
   partyChat: PartyChat;
+  revocations: Revocations;
 }
 
 export function createEventHandler(deps: HandlerDeps): (event: AnyEvent) => Promise<void> {
-  const { bus, presence, announcer, friendMessages, partyChat } = deps;
+  const { bus, presence, announcer, friendMessages, partyChat, revocations } = deps;
 
   const notify = (userIds: string[], event: AnyEvent, data: unknown = event.data) =>
     bus.publish({ kind: "push", userIds, payload: { type: "notification", event: event.type, data } });
@@ -58,8 +60,26 @@ export function createEventHandler(deps: HandlerDeps): (event: AnyEvent) => Prom
       case "progress.achievement_unlocked":
         return notify([event.data.user_id], event);
       case "player.match": {
-        const activity = event.data.action === "joined" ? "in_match" : "menu";
-        if (await presence.setActivity(event.data.user_id, activity)) await announcer.changed(event.data.user_id);
+        const { user_id, server_id, action } = event.data;
+        if (await presence.matchChanged(user_id, server_id, action)) await announcer.changed(user_id);
+        return;
+      }
+      case "server.removed": {
+        // A crashed server never says its players left: they are back in the menu.
+        for (const userId of await presence.serverRemoved(event.data.server_id)) await announcer.changed(userId);
+        return;
+      }
+      case "auth.sessions_revoked": {
+        const userId = event.data.user_id;
+        const revokedAt = Date.parse(event.data.revoked_at);
+        await revocations.record(userId, revokedAt);
+        await bus.publish({
+          kind: "close",
+          userId,
+          code: CloseCode.authFailed,
+          reason: "session_revoked",
+          issuedBefore: revokedAt,
+        });
         return;
       }
       case "user.deleted": {

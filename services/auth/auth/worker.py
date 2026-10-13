@@ -1,4 +1,5 @@
-"""Auth worker: consumes the auth.emails stream and sends the emails over SMTP.
+"""Auth worker: consumes the auth.emails stream and sends the emails over SMTP, and publishes
+events left in the outbox (Redis was down when the request tried).
 
 Run with `python -m auth.worker`.
 """
@@ -12,6 +13,7 @@ from tpsarena_common.events import CodeEmail, Event
 from tpsarena_common.streams import StreamConsumer, consumer_redis
 
 from auth.config import get_settings
+from auth.events import outbox
 
 log = logging.getLogger("auth.worker")
 
@@ -49,11 +51,15 @@ async def handle(event: Event) -> None:
         await send_email(event)
 
 
-def main() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+async def run() -> None:
     settings = get_settings()
     consumer = StreamConsumer(consumer_redis(settings.redis_url), "auth", "auth-worker", [settings.emails_stream], handle)
-    asyncio.run(consumer.run())
+    await asyncio.gather(consumer.run(), outbox.run())
+
+
+def main() -> None:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    asyncio.run(run())
 
 
 if __name__ == "__main__":

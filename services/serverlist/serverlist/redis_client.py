@@ -29,3 +29,4 @@ def ticket_key(ticket_id: str) -> str:
 
 
 ACTIVE_SERVERS = "serverlist:servers:active"
+EVENTS_STREAM = "serverlist.events"

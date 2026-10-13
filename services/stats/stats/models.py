@@ -3,6 +3,7 @@ from datetime import datetime
 
 from sqlalchemy import DateTime, ForeignKey, Index, MetaData, String, UniqueConstraint, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from tpsarena_common.outbox import outbox_table
 
 
 class Base(DeclarativeBase):
@@ -63,3 +64,7 @@ class PlayerAchievement(Base):
     achievement_id: Mapped[str] = mapped_column(String(32), primary_key=True)
     match_id: Mapped[uuid.UUID]
     unlocked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+# Events waiting to be published (see tpsarena_common.outbox).
+Outbox = outbox_table(Base.metadata)

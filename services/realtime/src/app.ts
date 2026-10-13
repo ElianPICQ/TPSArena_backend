@@ -13,6 +13,7 @@ import { Hub } from "./hub.js";
 import { makeVerifier, remoteKeys } from "./jwt.js";
 import { log } from "./log.js";
 import { Presence } from "./presence.js";
+import { Revocations } from "./revocations.js";
 import { connect } from "./redis.js";
 import { StreamConsumer } from "./streams.js";
 
@@ -39,14 +40,15 @@ export function createApp(config: Config, options: { keys?: JWTVerifyGetKey } = 
   const announcer = new Announcer(redis, presence, bus, config.eventsStreamMaxlen);
   const friendMessages = new FriendMessages(db);
   const partyChat = new PartyChat(redis, config.partyChatHistory);
-  const hub = new Hub({ config, verify, presence, announcer, friendMessages, partyChat, bus });
+  const revocations = new Revocations(redis, config.accessTokenTtlSeconds);
+  const hub = new Hub({ config, verify, presence, announcer, friendMessages, partyChat, bus, revocations });
 
   const consumer = new StreamConsumer(
     streamsRedis,
     "realtime",
     "realtime",
     STREAMS,
-    createEventHandler({ bus, presence, announcer, friendMessages, partyChat }),
+    createEventHandler({ bus, presence, announcer, friendMessages, partyChat, revocations }),
     { consumer: config.instanceId },
   );
 

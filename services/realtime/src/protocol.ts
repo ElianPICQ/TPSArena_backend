@@ -13,7 +13,7 @@ export type ServerMessage =
   | { type: "error"; error: string; message: string };
 
 export const CloseCode = {
-  authFailed: 4001, // missing, invalid or expired token
+  authFailed: 4001, // missing, invalid, expired or revoked token
   accountDeleted: 4003,
   authTimeout: 4008, // no `auth` message in time
   tryAgainLater: 1013, // a service we depend on (Social) is unavailable

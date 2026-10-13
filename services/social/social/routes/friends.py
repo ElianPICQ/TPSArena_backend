@@ -9,10 +9,10 @@ from tpsarena_common.events import FriendAdded, FriendRemoved, FriendRequestRemo
 
 from social import clients
 from social.config import get_settings
+from social.events import outbox
 from social.deps import CurrentUserId, Session
 from social.errors import APIError
 from social.models import FriendRequest, Friendship, Player
-from social.redis_client import publish_event
 from social.schemas import (
     ErrorResponse,
     Friend,
@@ -109,19 +109,24 @@ async def send_friend_request(
     )
     if reverse is not None:
         await make_friends(session, user_id, target)
+        await outbox.add(session, FriendAdded(user_id=user_id, friend_id=target))
         await session.commit()
-        await publish_event(FriendAdded(user_id=user_id, friend_id=target))
+        await outbox.try_flush()
         return FriendRequestResult(status="accepted", request_id=None)
 
     friend_request = FriendRequest(from_user_id=user_id, to_user_id=target)
     session.add(friend_request)
     try:
+        await session.flush()
+        await outbox.add(
+            session, FriendRequestSent(request_id=friend_request.id, from_user_id=user_id, to_user_id=target)
+        )
         await session.commit()
     except IntegrityError:
         # Lost a race with the same request sent twice at once.
         await session.rollback()
         raise APIError(409, "request_exists", "You already sent this player a request.")
-    await publish_event(FriendRequestSent(request_id=friend_request.id, from_user_id=user_id, to_user_id=target))
+    await outbox.try_flush()
     return FriendRequestResult(status="pending", request_id=friend_request.id)
 
 
@@ -136,8 +141,9 @@ async def accept_friend_request(request_id: uuid.UUID, user_id: CurrentUserId, s
     other = friend_request.from_user_id
     await check_friend_limit(session, user_id, other)
     await make_friends(session, user_id, other)
+    await outbox.add(session, FriendAdded(user_id=user_id, friend_id=other))
     await session.commit()
-    await publish_event(FriendAdded(user_id=user_id, friend_id=other))
+    await outbox.try_flush()
     friendship = await session.get(Friendship, (user_id, other))
     return Friend(user_id=other, since=friendship.created_at)
 
@@ -153,12 +159,14 @@ async def decline_friend_request(request_id: uuid.UUID, user_id: CurrentUserId, 
     if friend_request is None or user_id not in (friend_request.from_user_id, friend_request.to_user_id):
         raise APIError(404, "request_not_found", "This friend request doesn't exist.")
     await session.delete(friend_request)
-    await session.commit()
-    await publish_event(
+    await outbox.add(
+        session,
         FriendRequestRemoved(
             request_id=request_id, from_user_id=friend_request.from_user_id, to_user_id=friend_request.to_user_id
-        )
+        ),
     )
+    await session.commit()
+    await outbox.try_flush()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -174,6 +182,7 @@ async def remove_friend(friend_id: uuid.UUID, user_id: CurrentUserId, session: S
     )
     if result.rowcount == 0:
         raise APIError(404, "not_friends", "You aren't friends with this player.")
+    await outbox.add(session, FriendRemoved(user_id=user_id, friend_id=friend_id))
     await session.commit()
-    await publish_event(FriendRemoved(user_id=user_id, friend_id=friend_id))
+    await outbox.try_flush()
     return Response(status_code=status.HTTP_204_NO_CONTENT)

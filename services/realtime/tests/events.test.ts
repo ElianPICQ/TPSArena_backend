@@ -1,5 +1,5 @@
 import { afterAll, afterEach, describe, expect, it } from "vitest";
-import { befriend, Client, newId, publishEvent, sleep, startInstance, stopInstances, testDb, testRedis } from "./helpers.js";
+import { befriend, Client, newId, publishEvent, sleep, startInstance, stopInstances, testDb, testRedis, token } from "./helpers.js";
 
 const redis = testRedis();
 const db = testDb();
@@ -135,10 +135,55 @@ describe("other events", () => {
     await Client.login(instance, bob);
     await a.next((m) => m.type === "presence" && m.status === "online");
 
-    await publishEvent(redis, "player.match", { user_id: bob, server_id: newId(), action: "joined" });
+    const serverId = newId();
+    await publishEvent(redis, "player.match", { user_id: bob, server_id: serverId, action: "joined" });
     expect(await a.next((m) => m.type === "presence")).toMatchObject({ user_id: bob, activity: "in_match" });
+    // Leaving another server (e.g. arriving after this join) changes nothing.
     await publishEvent(redis, "player.match", { user_id: bob, server_id: newId(), action: "left" });
+    await a.nothing((m) => m.type === "presence");
+    await publishEvent(redis, "player.match", { user_id: bob, server_id: serverId, action: "left" });
     expect(await a.next((m) => m.type === "presence")).toMatchObject({ user_id: bob, activity: "menu" });
+  });
+
+  it("server.removed puts the players of a crashed server back in the menu", async () => {
+    const instance = await startInstance();
+    const [alice, bob, carol] = [newId(), newId(), newId()];
+    befriend(alice, bob);
+    befriend(alice, carol);
+    const a = await Client.login(instance, alice);
+    await Client.login(instance, bob);
+    await Client.login(instance, carol);
+    await a.next((m) => m.type === "presence" && m.user_id === bob && m.status === "online");
+    await a.next((m) => m.type === "presence" && m.user_id === carol && m.status === "online");
+    const [crashed, other] = [newId(), newId()];
+    await publishEvent(redis, "player.match", { user_id: bob, server_id: crashed, action: "joined" });
+    await publishEvent(redis, "player.match", { user_id: carol, server_id: other, action: "joined" });
+    await a.next((m) => m.type === "presence" && m.user_id === bob && m.activity === "in_match");
+    await a.next((m) => m.type === "presence" && m.user_id === carol && m.activity === "in_match");
+
+    await publishEvent(redis, "server.removed", { server_id: crashed, party_id: null, reason: "timed_out" });
+    expect(await a.next((m) => m.type === "presence")).toMatchObject({ user_id: bob, activity: "menu" });
+    await a.nothing((m) => m.type === "presence" && m.user_id === carol);
+    expect(await redis.exists(`realtime:server:${crashed}:players`)).toBe(0);
+  });
+
+  it("auth.sessions_revoked closes sockets opened with older tokens and refuses those tokens", async () => {
+    const instance = await startInstance();
+    const bob = newId();
+    const now = Math.floor(Date.now() / 1000);
+    const oldToken = await token(bob, "15m", now - 60);
+    const old = await Client.login(instance, bob, oldToken);
+    const fresh = await Client.login(instance, bob, await token(bob, "15m", now + 1)); // logged in again after
+
+    await publishEvent(redis, "auth.sessions_revoked", { user_id: bob, revoked_at: new Date((now - 1) * 1000).toISOString() });
+    expect(await old.waitClosed()).toEqual({ code: 4001, reason: "session_revoked" });
+    await fresh.nothing(() => false);
+    expect(fresh.closed).toBeNull();
+
+    const again = await Client.open(instance);
+    again.send({ type: "auth", token: oldToken });
+    expect(await again.next((m) => m.type === "error")).toMatchObject({ error: "session_revoked" });
+    expect((await again.waitClosed()).code).toBe(4001);
   });
 
   it("user.deleted closes the player's sockets and deletes their messages", async () => {

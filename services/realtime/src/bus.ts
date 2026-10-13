@@ -9,7 +9,8 @@ export type BusMessage =
   | { kind: "push"; userIds: string[]; payload: ServerMessage }
   | { kind: "presence"; presence: PresenceInfo }
   | { kind: "friendship"; a: string; b: string; op: "add" | "remove" }
-  | { kind: "close"; userId: string; code: number; reason: string };
+  // issuedBefore (ms): only sockets authenticated with a token issued before then.
+  | { kind: "close"; userId: string; code: number; reason: string; issuedBefore?: number };
 
 const CHANNEL = "realtime:deliver";
 

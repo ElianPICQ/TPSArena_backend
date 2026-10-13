@@ -1,7 +1,10 @@
 // Presence in Redis (all keys under realtime:):
 //   realtime:presence:last_seen         zset  user_id -> last heartbeat (ms); membership = online
 //   realtime:presence:{user_id}:conns   zset  connection id -> last heartbeat (ms): connections per user
-//   realtime:presence:{user_id}         hash  activity (menu | in_match), TTL refreshed by heartbeats
+//   realtime:presence:{user_id}         hash  activity (menu | in_match), server_id (in a match),
+//                                             TTL refreshed by heartbeats
+//   realtime:server:{server_id}:players set   user ids in that game server's match (from player.match),
+//                                             to reset them if the server is lost (server.removed)
 // Lua scripts make "came online" and "went offline" happen exactly once, even with several
 // instances: only the call that adds/removes the user from last_seen reports the change.
 import type { Redis } from "ioredis";
@@ -18,6 +21,8 @@ export interface PresenceInfo {
 const LAST_SEEN = "realtime:presence:last_seen";
 const hashKey = (userId: string) => `realtime:presence:${userId}`;
 const connsKey = (userId: string) => `realtime:presence:${userId}:conns`;
+const serverPlayersKey = (serverId: string) => `realtime:server:${serverId}:players`;
+const SERVER_PLAYERS_TTL_SECONDS = 24 * 3600; // refreshed by each join; outlives any match
 
 // KEYS: hash, conns, last_seen   ARGV: user_id, connection id, now ms, ttl s   -> 1 if the user came online
 const TOUCH = new Script(`
@@ -40,11 +45,26 @@ end
 return 0
 `);
 
-// KEYS: hash, last_seen   ARGV: user_id, activity, ttl s   -> 1 if the user is online (activity stored)
-const SET_ACTIVITY = new Script(`
+// KEYS: hash, last_seen, server players   ARGV: user_id, joined | left, server_id, ttl s, server players ttl s
+// -> 1 if the user is online and their activity was set. Leaving a server they aren't shown on
+// (e.g. "left A" arriving after "joined B") changes nothing.
+const MATCH_CHANGED = new Script(`
+if ARGV[2] == 'joined' then
+  redis.call('SADD', KEYS[3], ARGV[1])
+  redis.call('EXPIRE', KEYS[3], ARGV[5])
+else
+  redis.call('SREM', KEYS[3], ARGV[1])
+end
 if not redis.call('ZSCORE', KEYS[2], ARGV[1]) then return 0 end
-redis.call('HSET', KEYS[1], 'activity', ARGV[2])
-redis.call('EXPIRE', KEYS[1], ARGV[3])
+if ARGV[2] == 'joined' then
+  redis.call('HSET', KEYS[1], 'activity', 'in_match', 'server_id', ARGV[3])
+else
+  local current = redis.call('HGET', KEYS[1], 'server_id')
+  if current and current ~= ARGV[3] then return 0 end
+  redis.call('HSET', KEYS[1], 'activity', 'menu')
+  redis.call('HDEL', KEYS[1], 'server_id')
+end
+redis.call('EXPIRE', KEYS[1], ARGV[4])
 return 1
 `);
 
@@ -76,8 +96,22 @@ export class Presence {
     return this.redis.zrangebyscore(LAST_SEEN, "-inf", Date.now() - this.ttlSeconds * 1000);
   }
 
-  async setActivity(userId: string, activity: Activity): Promise<boolean> {
-    return (await SET_ACTIVITY.run(this.redis, [hashKey(userId), LAST_SEEN], [userId, activity, this.ttlSeconds])) === 1;
+  /** A game server reported the player joining or leaving its match. True if the shown activity was set. */
+  async matchChanged(userId: string, serverId: string, action: "joined" | "left"): Promise<boolean> {
+    const keys = [hashKey(userId), LAST_SEEN, serverPlayersKey(serverId)];
+    const args = [userId, action, serverId, this.ttlSeconds, SERVER_PLAYERS_TTL_SECONDS];
+    return (await MATCH_CHANGED.run(this.redis, keys, args)) === 1;
+  }
+
+  /** The server is gone without saying its players left. Returns the online players set back to "menu". */
+  async serverRemoved(serverId: string): Promise<string[]> {
+    const players = await this.redis.smembers(serverPlayersKey(serverId));
+    const changed: string[] = [];
+    for (const userId of players) {
+      if (await this.matchChanged(userId, serverId, "left")) changed.push(userId);
+    }
+    await this.redis.del(serverPlayersKey(serverId));
+    return changed;
   }
 
   async get(userIds: string[]): Promise<PresenceInfo[]> {

@@ -12,7 +12,7 @@ dependencies = [
     "alembic>=1.14",
     "redis>=5.2",
     "httpx>=0.28",
-    "tpsarena-common",
+    "tpsarena-common[outbox]",
 ]
 
 [dependency-groups]
@@ -24,7 +24,7 @@ dev = [
 ]
 
 [tool.uv.sources]
-tpsarena-common = { git = "ssh://git@github.com/ElianPICQ/TSArena_backend.git", tag = "common-v0.1.0", subdirectory = "libs/common" }
+tpsarena-common = { git = "ssh://git@github.com/ElianPICQ/TSArena_backend.git", tag = "common-v0.3.0", subdirectory = "libs/common" }
 
 [build-system]
 requires = ["hatchling"]

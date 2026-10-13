@@ -41,7 +41,7 @@ This summarizes design decisions made in a previous conversation. Use it as the 
 - **PostgreSQL**: **one database per service** (`auth`, `social`, `stats`, `chat`), each with its own user; in development each runs in the service's own Postgres container. Inside its database a service keeps its tables in a schema of the same name (created by its first migration). A service can move to another server by changing its `DATABASE_URL`.
 - **Redis**: one shared instance used for the server registry, join tickets, presence keys, parties/invites, party chat, and **Redis Streams as the message broker**. **AOF persistence must be on** (stream messages must survive a restart).
   - **Every key starts with its owning service** (`auth:`, `serverlist:`, `social:`, `stats:`, `realtime:`); only the stream names (`user.deleted`, `social.events`, …) are shared.
-  - **One ACL user per service** (`infra/redis/start.sh`), limited to its own prefix, read/write on the streams it consumes (consumer groups record acknowledgements) and write-only on the streams it only publishes; Pub/Sub only on its own channels (`&realtime:*` for Real-time); `-@dangerous` (no `FLUSHDB`, `KEYS`, `CONFIG`, `INFO`…, so clients must not rely on `INFO`, e.g. ioredis' ready check is off). Each service's `REDIS_URL` carries its user and password.
+  - **One ACL user per service** (`infra/redis/start.sh`), limited to its own prefix, read/write on the streams it consumes (consumer groups record acknowledgements) and write-only on the streams it only publishes (except the Server List on `serverlist.events`: scripts need read/write on the keys they're given); Pub/Sub only on its own channels (`&realtime:*` for Real-time); `-@dangerous` (no `FLUSHDB`, `KEYS`, `CONFIG`, `INFO`…, so clients must not rely on `INFO`, e.g. ioredis' ready check is off). Each service's `REDIS_URL` carries its user and password.
   - The `default` user is the admin, behind a password, and **must keep full rights**: Redis replays the AOF at startup as the default user and silently drops any `MULTI`/`EXEC` (which includes Lua script results) it isn't allowed to run.
   - Services' Redis clients reconnect and retry on connection errors, so a Redis restart doesn't fail requests.
 - **Email sending** goes through plain **SMTP** configured by environment variables (`SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM`), so changing provider is a configuration change only:
@@ -59,7 +59,7 @@ This summarizes design decisions made in a previous conversation. Use it as the 
 
 | Service | Language / framework | Main libraries |
 |---|---|---|
-| Auth / Users API | Python, **FastAPI** | SQLAlchemy async or asyncpg, Alembic, a password hasher using Argon2 (`argon2-cffi` or `pwdlib`), PyJWT (signing), `redis-py` (publishing `user.deleted`, `auth.emails`, rate limits), `aiosmtplib` (SMTP, provider-agnostic) |
+| Auth / Users API | Python, **FastAPI** | SQLAlchemy async or asyncpg, Alembic, a password hasher using Argon2 (`argon2-cffi` or `pwdlib`), PyJWT (signing), `redis-py` (publishing `user.deleted`, `auth.emails`, `auth.sessions`, rate limits), `aiosmtplib` (SMTP, provider-agnostic) |
 | Server List API | Python, **FastAPI** | `redis-py` (asyncio), PyJWT + JWKS client |
 | Social API | Python, **FastAPI** | SQLAlchemy async or asyncpg, Alembic, `redis-py` (Streams + Lua script for party joins), PyJWT |
 | Stats API | Python, **FastAPI** | SQLAlchemy async or asyncpg, Alembic, `redis-py` (Streams, sorted sets for leaderboard cache), PyJWT |
@@ -72,20 +72,22 @@ Why this split: the stateless services are ordinary request/response work, where
 Conventions:
 - **Event formats have one source of truth**: Pydantic models in `tpsarena_common.events` → `python -m tpsarena_common.export_schemas` writes `libs/common/schemas/events.json` (committed; a test fails if it's out of date) → released with the package tag → Real-time copies it from a tag (`npm run sync:events -- X.Y.Z` → `contracts/events.json`) → `json-schema-to-typescript` generates its types before each build and test, and Ajv validates events at runtime against the same file. A format change then breaks the TypeScript build instead of silently breaking notifications.
 - **Versioned shared package**: services depend on a **git tag** of `libs/common` (`common-vX.Y.Z`) from the private GitHub repo `ElianPICQ/TSArena_backend`, pinned to a commit by `uv.lock`. `scripts/release_common.py X.Y.Z` runs its tests, updates its version and CHANGELOG, tags and pushes; each service upgrades on its own (change the tag, `uv lock`). Images build from the service folder; the builder stage downloads the package through the developer's SSH agent (`ssh: [default]` in compose, `ssh-add` once per session) and the final image has no git or keys. `uv run --with-editable ../../libs/common pytest` tries an unreleased change.
-- **Shared internal Python package** (`libs/common`, `tpsarena_common`) for the Python services: JWT verification (JWKS fetched once, cached, fetched again on an unknown `kid`), the Redis Streams consumer base (consumer groups, `XACK`, `XAUTOCLAIM`, duplicate skipping, undecodable messages logged and acknowledged), event models.
+- **Shared internal Python package** (`libs/common`, `tpsarena_common`) for the Python services: JWT verification (JWKS fetched once, cached, fetched again on an unknown `kid`), the Redis Streams consumer base (consumer groups, `XACK`, `XAUTOCLAIM`, duplicate skipping, undecodable messages logged and acknowledged, waits and resumes when Redis is unavailable, recreates lost consumer groups), event models, the transactional outbox.
+- **Transactional outbox** for events about rows in PostgreSQL (Auth: `auth.emails`, `user.deleted`, `auth.sessions`; Social: friend events; Stats: `stats.progress`): the event is written to the service's `outbox` table in the same transaction as the change, published right after the commit, and deleted once published. If Redis is down, the request still succeeds and the service's worker publishes the leftovers every 2 s. A crash between publish and delete can publish twice, which consumers already skip. Events about Redis-only state are published directly (Social's party events) or from inside the Lua script that makes the change (Server List).
 - **Stream entry format**: every entry has three fields: `event_id`, `type` (e.g. `party.updated`, picks the model) and `data` (the model's other fields as JSON).
 - **Stream consumers run as a separate process** from the API: same codebase, different entry point (e.g. `python -m stats.worker`), so the API and the consumer restart and scale independently.
 - **Async everywhere** in FastAPI: no blocking calls in async routes (use `httpx`, not `requests`; async DB drivers).
 - Run FastAPI with **uvicorn**, one process per CPU core in production.
-- JWT verification and the stream consumer loop also exist in TypeScript in the real-time service (`src/jwt.ts`, `src/streams.ts`); keep both implementations behaving the same (same error codes, same `{prefix}:handled:{group}:{event_id}` markers, undecodable events acknowledged). The TypeScript consumer already survives a lost Redis connection (see TODO.md for the Python one).
+- JWT verification and the stream consumer loop also exist in TypeScript in the real-time service (`src/jwt.ts`, `src/streams.ts`); keep both implementations behaving the same (same error codes, same `{prefix}:handled:{group}:{event_id}` markers, undecodable events acknowledged, survive a lost Redis connection).
 
 ### Authentication
 - Auth signs JWTs with an **asymmetric key** (RS256 or EdDSA) so other services can verify them with the public key only. The JWT contains the user ID in `sub` and is short-lived (around 15 minutes).
-- **Refresh tokens** are long-lived, stored hashed in the `auth` schema, rotated on each use, and revoked on logout.
+- **Refresh tokens** are long-lived, stored hashed in the `auth` schema, rotated on each use, and revoked on logout. Using a **rotated** token again means it was stolen: every session of the player is revoked. A token revoked by logout or a password reset is just invalid (so an old device refreshing after a reset doesn't log out the new session).
+- **Revoking every session** (password reset, stolen refresh token) publishes `auth.sessions_revoked` with `revoked_at`: Real-time closes the sockets authenticated with older access tokens (4001 `session_revoked`) and refuses those tokens until they expire. Logging out one device revokes only its refresh token; its access token and socket live until expiry (at most 15 min).
 - Passwords are hashed with **Argon2**.
 - Every service verifies JWTs locally using Auth's public key (**JWKS** endpoint), no call to Auth per request.
 - The desktop client holds its tokens and sends the access token to the BFF, which forwards it to the services.
-- Game servers authenticate to the Server List API with a **server secret** (env variable), not a player token.
+- Game servers **register** with the shared **server secret** (env variable), not a player token. Registration returns the server's **own token** (stored hashed in its registry hash); heartbeats, deregistration and ticket checks require it, so one server can't act as another.
 - Players join a game server with a **single-use join ticket** (30 s TTL), verified by the game server through the Server List API (`GETDEL` so it can't be reused).
 
 ### Email verification and password reset
@@ -113,13 +115,13 @@ The real-time service knows party membership from `party.updated` events (it kee
 
 ```
 # Server registry (Server List API)
-serverlist:server:{server_id}      hash    address, port, name, region, map, status, players, max_players, party_id, reserved_until, build_version, started_at   (TTL 15 s, refreshed by heartbeat)
+serverlist:server:{server_id}      hash    address, port, name, region, map, status, players, max_players, party_id, reserved_until, build_version, started_at, token_hash   (TTL 30 s, refreshed by heartbeat: outlives the 15 s timeout so the sweeper still reads party_id)
 serverlist:server:{server_id}:tickets  zset  unused ticket ids scored by expiry: each holds a slot; reserved_slots = unexpired entries (computed, not stored)
-serverlist:servers:active          zset    server_id scored by last heartbeat time (stale entries filtered and cleaned)
+serverlist:servers:active          zset    server_id scored by last heartbeat time (stale entries hidden from the list; removed by the sweeper every 5 s, which publishes server.removed)
 serverlist:ticket:{ticket_id}      string  { user_id, server_id }   (TTL 30 s, single use)
 
 # Rate limits (Auth API)
-auth:ratelimit:{action}:{email_or_ip}   counter   INCR + EXPIRE window (e.g. 3 code emails per 15 min, 10 logins per minute)
+auth:ratelimit:{action}:{email_or_ip_or_user}   counter   INCR + EXPIRE window (e.g. 3 code emails per 15 min, 10 logins per minute, 30 username lookups per minute)
 
 # Server status lifecycle
 idle → reserved (allocated to a party) → in_progress (visible in public list if slots free) → ending → idle
@@ -127,7 +129,9 @@ idle → reserved (allocated to a party) → in_progress (visible in public list
 # Presence (Real-time service)
 realtime:presence:last_seen           zset    user_id -> last heartbeat (ms); being in it = online (Lua: online/offline announced once)
 realtime:presence:{user_id}:conns     zset    connection id -> last heartbeat: connections per user (TTL 60 s)
-realtime:presence:{user_id}           hash    activity: menu | in_match   (TTL 60 s, refreshed by client heartbeat)
+realtime:presence:{user_id}           hash    activity: menu | in_match, server_id while in a match   (TTL 60 s, refreshed by client heartbeat)
+realtime:server:{server_id}:players   set     players in that game server's match (from player.match), reset to menu on server.removed (TTL 1 day)
+realtime:revoked:{user_id}            string  revoked_at (ms) of auth.sessions_revoked; older access tokens refused (TTL 15 min = access token lifetime)
 
 # Party chat (Real-time service)
 realtime:party_chat:{party_id}           list    recent party messages, capped; deleted on party.disbanded
@@ -158,6 +162,8 @@ social:invite:{invite_id}          hash    party_id, from, to   (TTL 60 s)
 | `social.events` | Social | Real-time | Friend requests, `party.invite_sent`, `party.updated`, `party.match_ready` (server address + per-member ticket), `party.disbanded` (delete party chat) |
 | `stats.progress` | Stats | Real-time | Push level-up (`progress.level_up`) / achievement (`progress.achievement_unlocked`) notifications |
 | `presence.changed` (online / offline) | Real-time | Social | Remove disconnected players from parties |
+| `auth.sessions` (`auth.sessions_revoked`) | Auth | Real-time | Every session of a player was revoked: close sockets opened with older access tokens |
+| `serverlist.events` | Server List | Social, Real-time | `server.removed` (deregistered, or missed heartbeats: crashed; carries the `party_id` it hosted) and `server.reservation_expired` (the party never started the match): Social puts the party back to `lobby`, Real-time puts the server's players back to "in menu" |
 
 Rules:
 - One **consumer group per consuming service** per stream; multiple instances of a service share the group.
@@ -182,17 +188,17 @@ Rules:
 2. Friend accepts → atomic add (max 8) → `party.updated` pushed to all members. Party chat is available through Real-time.
 3. Leader leaves → another member becomes leader; last member leaves → party deleted → `party.disbanded` → party chat deleted. Disconnected members are removed via `presence.changed`.
 4. Leader clicks Start → `POST /parties/{id}/launch` → status `launching` → Social calls Server List `POST /allocations` with the member list → an `idle` server becomes `reserved` for that party, with one slot reserved per member and one ticket per member → `party.match_ready` → each member gets the address and their own ticket → clients connect → match starts when all members are connected or after ~30 s. Slots of members who never connect are released.
-5. Match ends → game server heartbeats `idle` (server back to `idle`) and publishes `match.finished` with its `party_id` → Social puts the party back to `lobby` (only if the event comes from the party's own server), so it can relaunch without re-inviting. In-match chat is discarded.
+5. Match ends → game server heartbeats `idle` (server back to `idle`) and publishes `match.finished` with its `party_id` → Social puts the party back to `lobby` (only if the event comes from the party's own server), so it can relaunch without re-inviting. In-match chat is discarded. If the server crashes or shuts down first (`server.removed`), or the party never starts the match before the reservation runs out (`server.reservation_expired`), Social does the same.
 
 **Joining a started match (strangers)**: once a party's match is `in_progress`, the server appears in the public server list if it has free slots (`players + reserved_slots < max_players`, with `max_players = 8`; `reserved_slots` counts unexpired tickets, so a member who never connects frees their slot after 30 s). A match launched by a full party of 8 only becomes joinable when someone leaves. Servers that are `idle` or `reserved` never appear in the list. A player picks a server → BFF → Server List issues a join ticket (re-checking free slots) → client connects over UDP with it → game server verifies the ticket. The list is filtered by `build_version`.
 
-**Game server registry**: game servers register on startup (`POST /servers`), heartbeat every 5 s (`PUT /servers/{id}/heartbeat` with player count, status, map), send an immediate update on important changes, and deregister on shutdown; crashed servers expire after 15 s. The heartbeat reply (`status`, `party_id`, `reserved_slots`) is how a game server learns it was reserved for a party; for 35 s after an allocation, a heartbeat saying `idle` doesn't cancel the reservation. A server can never set itself to `reserved`. A pool of idle servers is kept running (Docker at first, Agones later).
+**Game server registry**: game servers register on startup (`POST /servers`, shared secret → the server's own token for every later call), heartbeat every 5 s (`PUT /servers/{id}/heartbeat` with player count, status, map), send an immediate update on important changes, and deregister on shutdown; crashed servers are removed after 15 s without heartbeat. Both publish `server.removed`. The heartbeat reply (`status`, `party_id`, `reserved_slots`) is how a game server learns it was reserved for a party; for 35 s after an allocation, a heartbeat saying `idle` doesn't cancel the reservation. A server can never set itself to `reserved`. A pool of idle servers is kept running (Docker at first, Agones later).
 
 **Match end**: game server publishes `match.finished` with `match_id`, `server_id`, `party_id`, `map`, `started_at`, `ended_at` and `players` (per player: `user_id`, `kills`, `deaths`, `placement`, 1 = winner; includes players who left early). Stats stores results idempotently by `match_id`, in one transaction: match, per-player results, running totals, level and achievements. Then it updates the leaderboard cache and publishes level ups and achievements on `stats.progress`.
 
 **Progression**: XP per match = 100 for playing + 10 per kill + 200 for 1st place. Everyone starts at level 1; going from level L to L+1 takes 1000 + 250 × (L − 1) XP. Achievements are defined in code (first match, first win, 10 wins, 100 kills, 1000 kills, 10 kills in one match, win without dying), each unlocked once. Leaderboards are all-time only (`xp`, `wins`, `kills`); players with the same total share a rank ("1224" ranking).
 
-**Presence and the WebSocket** (protocol for the client: `services/realtime/PROTOCOL.md`): the client connects to Real-time directly (`ws://…:8005/ws`) and sends `{"type": "auth", "token"}` within 5 s (not a handshake header, so a future browser client works too), then again after each token refresh; a socket whose token expires without a new one is closed (4001). Real-time loads the player's friends from Social with that token. Online = at least one socket with a heartbeat (every 20 s; a connection is gone after 60 s without one). When the last socket closes, the player goes offline after a **30 s grace period** (a quick reconnect doesn't count), then `presence.changed` offline makes Social remove them from their party. A sweeper finds players of a crashed instance. "In match" comes from game server `player.match` events. Pull via `GET /presence?ids=` (answers only for friends), push to online friends on change. Count connections per user; only friends can see status.
+**Presence and the WebSocket** (protocol for the client: `services/realtime/PROTOCOL.md`): the client connects to Real-time directly (`ws://…:8005/ws`) and sends `{"type": "auth", "token"}` within 5 s (not a handshake header, so a future browser client works too), then again after each token refresh; a socket whose token expires without a new one is closed (4001). Real-time loads the player's friends from Social with that token. Online = at least one socket with a heartbeat (every 20 s; a connection is gone after 60 s without one). When the last socket closes, the player goes offline after a **30 s grace period** (a quick reconnect doesn't count), then `presence.changed` offline makes Social remove them from their party. A sweeper finds players of a crashed instance. "In match" comes from game server `player.match` events (a `left` from another server than the one shown is ignored), and ends on `server.removed` if the server crashed. Pull via `GET /presence?ids=` (answers only for friends), push to online friends on change. Count connections per user; only friends can see status.
 
 **Real-time with several instances**: one consumer group `realtime`, so each stream event is handled by one instance; it publishes the pushes on the Pub/Sub channel `realtime:deliver` and every instance delivers them to its own sockets. `party.match_ready` gives each member only their own ticket; `party.updated` also reaches members who were just removed.
 
@@ -200,7 +206,7 @@ Rules:
 
 ## API outline
 
-- **Auth**: `POST /register`, `POST /verify-email`, `POST /verify-email/resend`, `POST /login`, `POST /refresh`, `POST /logout`, `POST /password-reset/request`, `POST /password-reset/confirm`, `GET /me`, `POST /me/delete`, `GET /users?ids=`, `GET /.well-known/jwks.json`
+- **Auth**: `POST /register`, `POST /verify-email`, `POST /verify-email/resend`, `POST /login`, `POST /refresh`, `POST /logout`, `POST /password-reset/request`, `POST /password-reset/confirm`, `GET /me`, `POST /me/delete`, `GET /users?ids=`, `GET /users/by-username/{username}` (exact, any case, public fields only, 30 per minute per player: to add a friend by name), `GET /.well-known/jwks.json`
 - **Server List**: `POST /servers`, `PUT /servers/{id}/heartbeat`, `DELETE /servers/{id}`, `GET /servers`, `POST /servers/{id}/join-ticket`, `POST /tickets/verify`, `POST /allocations`
 - **Social**: `GET /profiles/{userId}`, `PATCH /profiles/me`, `GET /friends`, `POST /friends/requests`, `POST /friends/requests/{id}/accept`, `POST /friends/requests/{id}/decline` (also cancels your own request), `DELETE /friends/{userId}`, `POST /parties`, `GET /parties/{id}`, `POST /parties/{id}/invite`, `POST /invites/{id}/accept`, `POST /parties/{id}/leave`, `POST /parties/{id}/kick`, `POST /parties/{id}/launch`
 - **Stats**: `GET /matches/{id}`, `GET /players/{id}/stats`, `GET /players/{id}/matches` (match history, newest first, cursor paging with `before`), `GET /leaderboards/{type}`, `GET /leaderboards/{type}/around/{userId}`, `GET /progression/{userId}`
@@ -257,6 +263,8 @@ flowchart LR
             SProg(["stats.progress<br/>level up, achievement"])
             SPres(["presence.changed<br/>online / offline"])
             SEmail(["auth.emails<br/>internal to Auth"])
+            SSess(["auth.sessions<br/>sessions revoked"])
+            SServer(["serverlist.events<br/>server removed, reservation expired"])
         end
         RateLimits[("Auth rate limits")]
     end
@@ -290,6 +298,8 @@ flowchart LR
     Social -.-> SSocial
     Stats -.-> SProg
     Realtime -.-> SPres
+    Auth -.-> SSess
+    SL -.-> SServer
 
     SMatch -.-> Stats
     SMatch -.-> Social
@@ -300,6 +310,9 @@ flowchart LR
     SSocial -.-> Realtime
     SProg -.-> Realtime
     SPres -.-> Social
+    SSess -.-> Realtime
+    SServer -.-> Social
+    SServer -.-> Realtime
     Auth -.-> SEmail
     SEmail -.-> AuthWorker
     AuthWorker -->|"verification + reset codes"| Email

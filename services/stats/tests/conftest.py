@@ -65,7 +65,7 @@ def trust_test_key():
 async def clean_state():
     """Every test starts with empty tables and an empty Redis (this run's own containers)."""
     async with SessionLocal() as session:
-        await session.execute(text("TRUNCATE stats.matches, stats.match_players, stats.player_stats CASCADE"))
+        await session.execute(text("TRUNCATE stats.matches, stats.match_players, stats.player_stats, stats.outbox CASCADE"))
         await session.commit()
     await redis.flushdb()
 

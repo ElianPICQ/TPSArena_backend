@@ -2,7 +2,7 @@
 // required, sub a UUID; keys from Auth's JWKS (cached, fetched again for an unknown kid).
 import { createRemoteJWKSet, errors, jwtVerify, type JWTVerifyGetKey } from "jose";
 
-export type TokenErrorCode = "not_authenticated" | "token_expired" | "invalid_token";
+export type TokenErrorCode = "not_authenticated" | "token_expired" | "invalid_token" | "session_revoked";
 
 export class TokenError extends Error {
   constructor(
@@ -16,6 +16,7 @@ export class TokenError extends Error {
 export interface VerifiedToken {
   userId: string;
   expiresAt: number; // ms
+  issuedAt: number; // ms, whole seconds (0 if the token has no iat)
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -32,7 +33,7 @@ export function makeVerifier(keys: JWTVerifyGetKey): Verifier {
     try {
       const { payload } = await jwtVerify(token, keys, { algorithms: ["EdDSA"], requiredClaims: ["exp", "sub"] });
       if (!UUID.test(payload.sub ?? "")) throw new TokenError("invalid_token", "The access token is invalid.");
-      return { userId: payload.sub!.toLowerCase(), expiresAt: payload.exp! * 1000 };
+      return { userId: payload.sub!.toLowerCase(), expiresAt: payload.exp! * 1000, issuedAt: (payload.iat ?? 0) * 1000 };
     } catch (error) {
       if (error instanceof TokenError) throw error;
       if (error instanceof errors.JWTExpired) throw new TokenError("token_expired", "The access token has expired.");

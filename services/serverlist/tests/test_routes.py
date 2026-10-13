@@ -1,13 +1,24 @@
 import uuid
 
 import httpx
+from tpsarena_common.events import Event, ReservationExpired, ServerRemoved, decode
 
 from serverlist.config import get_settings
-from serverlist.redis_client import ACTIVE_SERVERS, redis, server_key, server_tickets_key
+from serverlist.redis_client import ACTIVE_SERVERS, EVENTS_STREAM, redis, server_key, server_tickets_key
+from serverlist.routes import sweep
 
 from .conftest import GAME_SERVER, SOCIAL, player
 
 BUILD = "0.1.0"
+TOKENS: dict[str, str] = {}  # server id -> its token, from registration
+
+
+def as_server(server_id: str) -> dict[str, str]:
+    return {"authorization": f"Bearer {TOKENS[server_id]}"}
+
+
+async def server_events() -> list[Event]:
+    return [decode(fields) for _, fields in await redis.xrange(EVENTS_STREAM)]
 
 
 async def register(client: httpx.AsyncClient, **overrides) -> str:
@@ -22,12 +33,13 @@ async def register(client: httpx.AsyncClient, **overrides) -> str:
     }
     r = await client.post("/servers", json=body, headers=GAME_SERVER)
     assert r.status_code == 201, r.text
+    TOKENS[r.json()["server_id"]] = r.json()["server_token"]
     return r.json()["server_id"]
 
 
 async def heartbeat(client: httpx.AsyncClient, server_id: str, status: str, players: int = 0) -> httpx.Response:
     body = {"status": status, "players": players, "map": "arena"}
-    return await client.put(f"/servers/{server_id}/heartbeat", json=body, headers=GAME_SERVER)
+    return await client.put(f"/servers/{server_id}/heartbeat", json=body, headers=as_server(server_id))
 
 
 async def allocate(client: httpx.AsyncClient, members: list[uuid.UUID], **overrides) -> httpx.Response:
@@ -42,7 +54,7 @@ async def list_servers(client: httpx.AsyncClient, build: str = BUILD) -> list[di
 
 
 async def verify(client: httpx.AsyncClient, ticket: str, server_id: str) -> httpx.Response:
-    return await client.post("/tickets/verify", json={"ticket": ticket, "server_id": server_id}, headers=GAME_SERVER)
+    return await client.post("/tickets/verify", json={"ticket": ticket, "server_id": server_id}, headers=as_server(server_id))
 
 
 # --- Authentication ---
@@ -78,9 +90,31 @@ async def test_register_heartbeat_deregister(client):
     assert r.status_code == 200
     assert r.json() == {"status": "idle", "party_id": None, "reserved_slots": 0}
 
-    r = await client.delete(f"/servers/{server_id}", headers=GAME_SERVER)
+    r = await client.delete(f"/servers/{server_id}", headers=as_server(server_id))
     assert r.status_code == 204
     assert (await heartbeat(client, server_id, "idle")).status_code == 404
+    [event] = await server_events()
+    assert isinstance(event, ServerRemoved)
+    assert (str(event.server_id), event.party_id, event.reason) == (server_id, None, "deregistered")
+    # Idempotent.
+    assert (await client.delete(f"/servers/{server_id}", headers=as_server(server_id))).status_code == 204
+    assert len(await server_events()) == 1
+
+
+async def test_each_server_has_its_own_token(client):
+    server_id = await register(client)
+    other_id = await register(client)
+    body = {"status": "idle", "players": 0, "map": "arena"}
+    r = await client.put(f"/servers/{server_id}/heartbeat", json=body, headers=as_server(other_id))
+    assert r.status_code == 401
+    assert r.json()["error"] == "invalid_server_token"
+    # The shared secret only registers.
+    assert (await client.put(f"/servers/{server_id}/heartbeat", json=body, headers=GAME_SERVER)).status_code == 401
+    assert (await client.put(f"/servers/{server_id}/heartbeat", json=body)).status_code == 401
+    assert (await client.delete(f"/servers/{server_id}", headers=as_server(other_id))).status_code == 401
+    r = await client.post("/tickets/verify", json={"ticket": "t", "server_id": server_id}, headers=as_server(other_id))
+    assert r.status_code == 401
+    assert (await heartbeat(client, server_id, "idle")).status_code == 200
 
 
 async def test_register_rejects_more_than_8_players(client):
@@ -126,6 +160,30 @@ async def test_list_hides_stale_servers(client):
     await heartbeat(client, server_id, "in_progress", players=1)
     await redis.zadd(ACTIVE_SERVERS, {server_id: 0})  # last heartbeat long ago
     assert await list_servers(client) == []
+
+
+async def test_sweeper_removes_crashed_servers_and_names_their_party(client):
+    crashed = await register(client)
+    party_id = str(uuid.uuid4())
+    await allocate(client, [uuid.uuid4()], party_id=party_id)
+    alive = await register(client)
+    await redis.zadd(ACTIVE_SERVERS, {crashed: 0})  # stopped heartbeating
+
+    assert await sweep() == 1
+    [event] = await server_events()
+    assert isinstance(event, ServerRemoved)
+    assert (str(event.server_id), event.party_id, event.reason) == (crashed, party_id, "timed_out")
+    assert await redis.exists(server_key(crashed)) == 0
+    assert (await heartbeat(client, crashed, "idle")).status_code == 404  # must register again
+    assert await sweep() == 0  # once only
+    assert await redis.zrange(ACTIVE_SERVERS, 0, -1) == [alive]
+
+
+async def test_sweeper_spares_a_server_that_just_sent_a_heartbeat(client):
+    server_id = await register(client)
+    await heartbeat(client, server_id, "idle")
+    assert await sweep() == 0
+    assert await server_events() == []
 
 
 # --- Party allocation ---
@@ -178,9 +236,23 @@ async def test_allocation_rejects_party_over_8(client):
 async def test_reserved_server_returns_to_idle_after_reservation_window(client, monkeypatch):
     monkeypatch.setattr(get_settings(), "reservation_seconds", 0)
     server_id = await register(client)
-    await allocate(client, [uuid.uuid4()])
+    party_id = str(uuid.uuid4())
+    await allocate(client, [uuid.uuid4()], party_id=party_id)
     r = await heartbeat(client, server_id, "idle")
     assert r.json() == {"status": "idle", "party_id": None, "reserved_slots": 0}
+    # The party won't play there: Social puts it back in the lobby.
+    [event] = await server_events()
+    assert isinstance(event, ReservationExpired)
+    assert (str(event.server_id), event.party_id) == (server_id, party_id)
+    await heartbeat(client, server_id, "idle")
+    assert len(await server_events()) == 1
+
+
+async def test_idle_heartbeat_during_reservation_publishes_nothing(client):
+    server_id = await register(client)
+    await allocate(client, [uuid.uuid4()])
+    assert (await heartbeat(client, server_id, "idle")).json()["status"] == "reserved"
+    assert await server_events() == []
 
 
 async def test_party_flow_into_public_list(client):

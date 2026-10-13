@@ -2,7 +2,6 @@ from redis.asyncio import Redis
 from redis.asyncio.retry import Retry
 from redis.backoff import ExponentialBackoff
 from redis.exceptions import ConnectionError, TimeoutError
-from tpsarena_common.events import Event, publish
 
 from stats.config import get_settings
 
@@ -15,6 +14,3 @@ redis = Redis.from_url(
     health_check_interval=30,
 )
 
-
-async def publish_event(event: Event) -> None:
-    await publish(redis, event, maxlen=get_settings().events_stream_maxlen)

@@ -103,3 +103,20 @@ async def test_deleted_player(client):
 async def test_routes_need_a_token(client):
     r = await client.get(f"/players/{uuid.uuid4()}/stats", headers={"authorization": ""})
     assert r.status_code == 401
+
+
+async def test_progress_events_wait_in_the_outbox_while_redis_is_down(monkeypatch):
+    from redis.asyncio import Redis
+
+    from stats.events import outbox
+
+    p = uuid.uuid4()
+    down = Redis.from_url("redis://127.0.0.1:1/0", decode_responses=True)
+    monkeypatch.setattr(outbox, "redis", down)
+    await play(result(p, kills=1, placement=1))  # recorded; the notifications wait
+    assert await progress_events() == []
+
+    monkeypatch.undo()
+    await outbox.flush()  # what the worker does every few seconds
+    assert {e.TYPE for e in await progress_events() if e.user_id == p} >= {"progress.achievement_unlocked"}
+    await down.aclose()

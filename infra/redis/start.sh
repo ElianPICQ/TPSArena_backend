@@ -15,6 +15,7 @@ done
 ACL_FILE=/tmp/users.acl
 # ~pattern: read/write keys  %W~pattern: write only (publish to a stream)  &pattern: Pub/Sub channels  -@dangerous: no FLUSHDB, KEYS, CONFIG...
 # Consumers need write access to the streams they read: consumer groups record acknowledgements.
+# Server List adds its events from Lua scripts, which need read/write on every key they're given.
 #
 # `default` is the admin (for redis-cli: `redis-cli -a <REDIS_ADMIN_PASSWORD>`). It must keep full
 # rights: at startup Redis replays the append-only file as the default user, and a transaction
@@ -22,11 +23,11 @@ ACL_FILE=/tmp/users.acl
 # script result (parties, tickets, leaderboards...) would be lost on each restart.
 cat > "$ACL_FILE" <<ACL
 user default on >$REDIS_ADMIN_PASSWORD ~* &* +@all
-user auth on >$AUTH_REDIS_PASSWORD resetchannels ~auth:* ~auth.emails %W~user.deleted +@all -@dangerous
-user serverlist on >$SERVERLIST_REDIS_PASSWORD resetchannels ~serverlist:* +@all -@dangerous
-user social on >$SOCIAL_REDIS_PASSWORD resetchannels ~social:* ~user.deleted ~presence.changed ~match.finished %W~social.events +@all -@dangerous
+user auth on >$AUTH_REDIS_PASSWORD resetchannels ~auth:* ~auth.emails %W~user.deleted %W~auth.sessions +@all -@dangerous
+user serverlist on >$SERVERLIST_REDIS_PASSWORD resetchannels ~serverlist:* ~serverlist.events +@all -@dangerous
+user social on >$SOCIAL_REDIS_PASSWORD resetchannels ~social:* ~user.deleted ~presence.changed ~match.finished ~serverlist.events %W~social.events +@all -@dangerous
 user stats on >$STATS_REDIS_PASSWORD resetchannels ~stats:* ~match.finished ~user.deleted %W~stats.progress +@all -@dangerous
-user realtime on >$REALTIME_REDIS_PASSWORD resetchannels &realtime:* ~realtime:* ~social.events ~stats.progress ~player.match ~user.deleted %W~presence.changed +@all -@dangerous
+user realtime on >$REALTIME_REDIS_PASSWORD resetchannels &realtime:* ~realtime:* ~social.events ~stats.progress ~player.match ~user.deleted ~auth.sessions ~serverlist.events %W~presence.changed +@all -@dangerous
 ACL
 chmod 600 "$ACL_FILE"
 

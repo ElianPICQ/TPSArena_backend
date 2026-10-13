@@ -25,11 +25,13 @@ class Settings(BaseSettings):
     resend_ip_rate_limit: int = 10  # code emails per 15 minutes, per IP
     delete_account_rate_limit: int = 5  # password attempts per 15 minutes, per user
     users_lookup_max_ids: int = 100
+    username_lookup_rate_limit: int = 30  # per minute, per user
 
     emails_stream: str = "auth.emails"
     emails_stream_maxlen: int = 10_000
     user_deleted_stream: str = "user.deleted"
     user_deleted_stream_maxlen: int = 100_000
+    sessions_stream_maxlen: int = 100_000
 
     smtp_host: str = "localhost"
     smtp_port: int = 1025

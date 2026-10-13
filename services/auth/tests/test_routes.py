@@ -8,10 +8,12 @@ import jwt
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from tpsarena_common.events import CodeEmail, Event, UserDeleted, decode
+from redis.asyncio import Redis
+from tpsarena_common.events import CodeEmail, Event, SessionsRevoked, UserDeleted, decode
 
 from auth import security
 from auth.config import get_settings
+from auth.events import outbox
 from auth.main import app
 from auth.redis_client import redis
 
@@ -44,6 +46,15 @@ async def code_from_stream(email: str, kind: str = "verify") -> str:
         if isinstance(event, CodeEmail) and event.email == email.lower() and event.kind == kind:
             return event.code
     raise AssertionError(f"no {kind} email queued for {email}")
+
+
+async def revocations(user_id: str) -> list[SessionsRevoked]:
+    entries = await redis.xrange(SessionsRevoked.STREAM)
+    return [e for _, fields in entries if isinstance(e := decoded(fields), SessionsRevoked) and str(e.user_id) == user_id]
+
+
+def user_id_of(tokens: dict) -> str:
+    return jwt.decode(tokens["access_token"], options={"verify_signature": False})["sub"]
 
 
 async def test_register_verify_login_flow(client: httpx.AsyncClient):
@@ -158,6 +169,8 @@ async def test_reused_refresh_token_revokes_all_sessions(client: httpx.AsyncClie
     # The legitimate rotated token is revoked too.
     r = await client.post("/refresh", json={"refresh_token": new["refresh_token"]})
     assert r.status_code == 401
+    # And open connections (Real-time) are told.
+    assert len(await revocations(user_id_of(tokens))) == 1
 
 
 async def test_unknown_refresh_token(client: httpx.AsyncClient):
@@ -240,8 +253,10 @@ async def test_password_reset_flow(client: httpx.AsyncClient):
 
     # Single use.
     assert (await client.post("/password-reset/confirm", json=confirm)).status_code == 400
-    # All sessions revoked.
+    # All sessions revoked, and open connections (Real-time) are told.
     assert (await client.post("/refresh", json={"refresh_token": tokens["refresh_token"]})).status_code == 401
+    [revoked] = await revocations(user_id_of(tokens))
+    assert revoked.revoked_at > datetime.now(UTC) - timedelta(minutes=1)
     # Old password rejected, new one works.
     old_login = {"email": account["email"], "password": account["password"]}
     assert (await client.post("/login", json=old_login)).status_code == 401
@@ -460,3 +475,61 @@ async def test_jwks_verifies_issued_tokens(client: httpx.AsyncClient):
     key = next(k for k in keys if k["kid"] == kid)
     claims = jwt.decode(token, jwt.PyJWK(key).key, algorithms=["EdDSA"])
     assert uuid.UUID(claims["sub"])
+
+
+async def test_logout_of_one_device_does_not_revoke_the_others(client: httpx.AsyncClient):
+    tokens = await verified_tokens(client)
+    assert (await client.post("/logout", json={"refresh_token": tokens["refresh_token"]})).status_code == 204
+    assert await revocations(user_id_of(tokens)) == []
+
+
+async def test_events_wait_in_the_outbox_while_redis_is_down(client: httpx.AsyncClient, monkeypatch):
+    down = Redis.from_url("redis://127.0.0.1:1/0", decode_responses=True)
+    monkeypatch.setattr(outbox, "redis", down)
+    account = new_account()
+    r = await client.post("/register", json=account)
+    assert r.status_code == 201  # the account is created; only the email waits
+    with pytest.raises(AssertionError):
+        await code_from_stream(account["email"])
+
+    monkeypatch.setattr(outbox, "redis", redis)
+    await outbox.flush()  # what the worker does every few seconds
+    assert await code_from_stream(account["email"])
+    await down.aclose()
+
+
+async def test_get_user_by_username(client: httpx.AsyncClient):
+    account, tokens = await verified_account(client)
+    headers = bearer(tokens["access_token"])
+    r = await client.get(f"/users/by-username/{account['username'].upper()}", headers=headers)
+    assert r.status_code == 200
+    assert r.json() == {"user_id": user_id_of(tokens), "username": account["username"]}
+
+    r = await client.get("/users/by-username/nobody_here", headers=headers)
+    assert r.status_code == 404
+    assert r.json()["error"] == "user_not_found"
+
+    assert (await client.get(f"/users/by-username/{account['username']}")).status_code == 401
+
+
+async def test_get_user_by_username_rate_limited(client: httpx.AsyncClient):
+    _, tokens = await verified_account(client)
+    headers = bearer(tokens["access_token"])
+    limit = get_settings().username_lookup_rate_limit
+    statuses = [(await client.get("/users/by-username/someone", headers=headers)).status_code for _ in range(limit + 1)]
+    assert statuses[:limit] == [404] * limit
+    assert statuses[limit] == 429
+
+
+async def test_old_session_refreshing_after_reset_does_not_log_out_the_new_one(client: httpx.AsyncClient):
+    account, phone = await verified_account(client)
+    await client.post("/password-reset/request", json={"email": account["email"]})
+    reset_code = await code_from_stream(account["email"], "reset")
+    confirm = {"email": account["email"], "code": reset_code, "new_password": "new-secret-456"}
+    assert (await client.post("/password-reset/confirm", json=confirm)).status_code == 204
+    pc = (await client.post("/login", json={"email": account["email"], "password": "new-secret-456"})).json()
+
+    # The phone still has its old refresh token and tries it.
+    assert (await client.post("/refresh", json={"refresh_token": phone["refresh_token"]})).status_code == 401
+    assert (await client.post("/refresh", json={"refresh_token": pc["refresh_token"]})).status_code == 200
+    assert len(await revocations(user_id_of(pc))) == 1  # only the reset's

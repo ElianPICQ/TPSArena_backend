@@ -13,6 +13,15 @@ Player routes need tokens from Auth: when running alone, Auth is expected on the
 Building the image downloads `tpsarena-common` from the private GitHub repo through your SSH
 agent: run `ssh-add` once per session if `ssh-add -l` lists no key.
 
+## Game servers
+`POST /servers` takes the shared `GAME_SERVER_SECRET` and returns the server's own `server_token`.
+Every later call of that server (heartbeat, deregister, ticket verification) sends
+`Authorization: Bearer <server_token>`; a server can't act as another one. A server that missed
+its heartbeats for 15 s is removed (`404 server_not_found` on its next heartbeat: register again).
+
+Events on `serverlist.events`, added by the Lua scripts themselves: `server.removed` (deregistered,
+or removed by the sweeper that runs in each API instance) and `server.reservation_expired`.
+
 ## Tests
 `uv run pytest` — starts a throwaway Redis container (Docker must be running), nothing else needed.
 

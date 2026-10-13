@@ -1,3 +1,5 @@
+from urllib.parse import quote
+
 from fastapi import APIRouter, Request, Response
 
 from bff import upstream
@@ -62,3 +64,8 @@ async def delete_me(request: Request) -> Response:
 @router.get("/users")
 async def get_users(request: Request) -> Response:
     return await forward(request, "/users", "GET")
+
+
+@router.get("/users/by-username/{username}")
+async def get_user_by_username(username: str, request: Request) -> Response:
+    return await forward(request, f"/users/by-username/{quote(username, safe='')}", "GET")

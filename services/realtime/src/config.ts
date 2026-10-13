@@ -15,6 +15,7 @@ export interface Config {
   presenceTtlSeconds: number; // a connection without heartbeat for this long is gone
   offlineGraceSeconds: number; // after the last socket closes, before "offline"
   sweepIntervalSeconds: number; // looks for users of crashed instances
+  accessTokenTtlSeconds: number; // Auth's access token lifetime: how long a revocation is remembered
 
   messageMaxLength: number;
   messageRateLimit: number; // friend + party messages per window, per connection
@@ -43,6 +44,7 @@ export function loadConfig(overrides: Partial<Config> = {}): Config {
     presenceTtlSeconds: 60,
     offlineGraceSeconds: 30,
     sweepIntervalSeconds: 15,
+    accessTokenTtlSeconds: Number(env("ACCESS_TOKEN_TTL_SECONDS", "900")),
     messageMaxLength: 500,
     messageRateLimit: 10,
     messageRateWindowSeconds: 10,

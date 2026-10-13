@@ -36,7 +36,7 @@ Rate limit: 10 messages (friend + party) per 10 seconds per connection.
 | `{"type": "party_message", "message": {"party_id", "from_user_id", "body", "sent_at"}}` | A party member (including you, from any device) posted. |
 | `{"type": "party_history", "party_id", "messages": [...]}` | Answer to `party_history`, oldest first. |
 | `{"type": "notification", "event": "...", "data": {...}}` | See below. |
-| `{"type": "error", "error": "<code>", "message": "..."}` | A request was refused (`not_authenticated`, `invalid_token`, `token_expired`, `not_friends`, `not_in_party`, `invalid_body`, `rate_limited`, `service_unavailable`, ...). |
+| `{"type": "error", "error": "<code>", "message": "..."}` | A request was refused (`not_authenticated`, `invalid_token`, `token_expired`, `session_revoked`, `not_friends`, `not_in_party`, `invalid_body`, `rate_limited`, `service_unavailable`, ...). |
 
 ### Notifications (`event` → `data`)
 `data` has the same fields as the event in `contracts/events.json`, except where noted.
@@ -55,6 +55,7 @@ Rate limit: 10 messages (friend + party) per 10 seconds per connection.
 | Code | Meaning | Client should |
 |---|---|---|
 | 4001 | Token missing, invalid or expired | Refresh the token (or log in again), then reconnect. |
+| 4001, reason `session_revoked` | Every session was ended (password reset, or a stolen refresh token) | Go back to the login screen (refreshing will fail). |
 | 4003 | Account deleted | Go back to the login screen. |
 | 4008 | No `auth` within 5 s | Reconnect and send `auth` first. |
 | 1013 | A service is unavailable (couldn't load your friends) | Reconnect after a few seconds. |

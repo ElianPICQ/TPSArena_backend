@@ -2,17 +2,18 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, Request, Response, status
+from fastapi import APIRouter, Depends, Path, Query, Request, Response, status
 from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from tpsarena_common.events import CodeEmail, SessionsRevoked, UserDeleted
 
 from auth import ratelimit, security
 from auth.config import get_settings
 from auth.db import get_session
 from auth.deps import CurrentUserId
 from auth.errors import APIError
-from auth.events import publish_email, publish_user_deleted
+from auth.events import outbox
 from auth.models import EmailCode, RefreshToken, User
 from auth.schemas import (
     DeleteAccountRequest,
@@ -82,6 +83,22 @@ async def new_email_code(session: AsyncSession, user_id: uuid.UUID, purpose: str
     return code
 
 
+async def queue_code_email(session: AsyncSession, user: User, purpose: str) -> None:
+    """New code for `user`, and its email queued in the outbox (both committed by the caller)."""
+    code = await new_email_code(session, user.id, purpose)
+    await outbox.add(session, CodeEmail(kind=purpose, email=user.email, username=user.username, code=code))
+
+
+async def revoke_all_sessions(session: AsyncSession, user_id: uuid.UUID, now: datetime) -> None:
+    """Revoke every refresh token of the user and tell long-lived connections (not committed)."""
+    await session.execute(
+        update(RefreshToken)
+        .where(RefreshToken.user_id == user_id, RefreshToken.revoked_at.is_(None))
+        .values(revoked_at=now)
+    )
+    await outbox.add(session, SessionsRevoked(user_id=user_id, revoked_at=now))
+
+
 def invalid_code() -> APIError:
     return APIError(400, "invalid_code", "The code is invalid or has expired.")
 
@@ -128,14 +145,14 @@ async def register(body: RegisterRequest, session: Session) -> RegisterResponse:
     session.add(user)
     try:
         await session.flush()
-        code = await new_email_code(session, user.id, "verify")
+        await queue_code_email(session, user, "verify")
         await session.commit()
     except IntegrityError:
         # Lost a race with a concurrent registration using the same email or username.
         await session.rollback()
         raise APIError(409, "already_registered", "This email or username is already taken.")
 
-    await publish_email("verify", user.email, user.username, code)
+    await outbox.try_flush()
     return RegisterResponse(user_id=user.id)
 
 
@@ -177,9 +194,9 @@ async def resend_verification_code(body: EmailRequest, request: Request, session
     if user is None or user.email_verified_at is not None:
         return answer
 
-    code = await new_email_code(session, user.id, "verify")
+    await queue_code_email(session, user, "verify")
     await session.commit()
-    await publish_email("verify", user.email, user.username, code)
+    await outbox.try_flush()
     return answer
 
 
@@ -219,14 +236,15 @@ async def refresh(body: RefreshTokenRequest, session: Session) -> TokenResponse:
         raise invalid
 
     now = datetime.now(UTC)
-    if token.revoked_at is not None:
+    if token.rotated_at is not None:
         # A rotated token used again means it may have been stolen: revoke every session of that user.
-        await session.execute(
-            update(RefreshToken)
-            .where(RefreshToken.user_id == token.user_id, RefreshToken.revoked_at.is_(None))
-            .values(revoked_at=now)
-        )
+        await revoke_all_sessions(session, token.user_id, now)
         await session.commit()
+        await outbox.try_flush()
+        raise invalid
+    if token.revoked_at is not None:
+        # Logged out, or revoked with all the others (password reset): just invalid. Treating it
+        # as stolen would log out the session the player just opened with the new password.
         raise invalid
     if token.expires_at <= now:
         raise invalid
@@ -236,6 +254,7 @@ async def refresh(body: RefreshTokenRequest, session: Session) -> TokenResponse:
         raise invalid
 
     token.revoked_at = now
+    token.rotated_at = now
     return await issue_tokens(session, user)
 
 
@@ -273,9 +292,9 @@ async def request_password_reset(body: EmailRequest, request: Request, session: 
     if user is None:
         return answer
 
-    code = await new_email_code(session, user.id, "reset")
+    await queue_code_email(session, user, "reset")
     await session.commit()
-    await publish_email("reset", user.email, user.username, code)
+    await outbox.try_flush()
     return answer
 
 
@@ -300,12 +319,9 @@ async def confirm_password_reset(body: PasswordResetConfirmRequest, request: Req
     if user.email_verified_at is None:
         user.email_verified_at = now
     # Log out every device: the player logs in again with the new password.
-    await session.execute(
-        update(RefreshToken)
-        .where(RefreshToken.user_id == user.id, RefreshToken.revoked_at.is_(None))
-        .values(revoked_at=now)
-    )
+    await revoke_all_sessions(session, user.id, now)
     await session.commit()
+    await outbox.try_flush()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -339,9 +355,9 @@ async def delete_me(body: DeleteAccountRequest, user_id: CurrentUserId, session:
         raise APIError(403, "wrong_password", "The password is incorrect.")
 
     await session.delete(user)  # refresh_tokens and email_codes go too (ON DELETE CASCADE)
+    await outbox.add(session, UserDeleted(user_id=user_id))
     await session.commit()
-    # TODO.md: publish through an outbox so this event can't be lost if Redis fails after the commit.
-    await publish_user_deleted(user_id)
+    await outbox.try_flush()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -367,3 +383,24 @@ async def get_users(
 
     rows = await session.execute(select(User.id, User.username).where(User.id.in_(user_ids)))
     return UsersResponse(users=[PublicUser(user_id=row.id, username=row.username) for row in rows])
+
+
+@router.get(
+    "/users/by-username/{username}",
+    responses={401: {"model": ErrorResponse}, 404: {"model": ErrorResponse}, 429: {"model": ErrorResponse}},
+)
+async def get_user_by_username(
+    username: Annotated[str, Path(min_length=1, max_length=20)], user_id: CurrentUserId, session: Session
+) -> PublicUser:
+    """Find a player by exact username (any case), e.g. to send a friend request. Only public fields.
+
+    Rate limited per player, so it can't be used to list every account.
+    """
+    settings = get_settings()
+    await ratelimit.hit("username_lookup", str(user_id), settings.username_lookup_rate_limit, 60)
+    row = (
+        await session.execute(select(User.id, User.username).where(func.lower(User.username) == username.lower()))
+    ).first()
+    if row is None:
+        raise APIError(404, "user_not_found", "No player has this username.")
+    return PublicUser(user_id=row.id, username=row.username)

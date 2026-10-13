@@ -4,12 +4,13 @@ import time
 import uuid
 
 from fastapi import APIRouter, Query, Response, status
+from fastapi.security import HTTPAuthorizationCredentials
 
 from serverlist import scripts
 from serverlist.config import get_settings
-from serverlist.deps import CurrentUserId, GameServer, SocialService
+from serverlist.deps import Credentials, CurrentUserId, GameServer, SocialService, check_server_token, hash_server_token
 from serverlist.errors import APIError
-from serverlist.redis_client import ACTIVE_SERVERS, redis, server_key, server_tickets_key, ticket_key
+from serverlist.redis_client import ACTIVE_SERVERS, EVENTS_STREAM, redis, server_key, server_tickets_key, ticket_key
 from serverlist.schemas import (
     AllocationRequest,
     AllocationResponse,
@@ -39,13 +40,35 @@ def new_ticket_id() -> str:
     return secrets.token_urlsafe(24)
 
 
+def server_hash_ttl() -> int:
+    # Outlives the heartbeat timeout, so the sweeper still finds the party of a crashed server.
+    return get_settings().server_ttl_seconds * 2
+
+
+async def sweep() -> int:
+    """Remove servers that missed their heartbeats (crashed) and publish server.removed for each."""
+    settings = get_settings()
+    stale_before = now_ms() - settings.server_ttl_seconds * 1000
+    removed = 0
+    for sid in await redis.zrangebyscore(ACTIVE_SERVERS, "-inf", stale_before):
+        removed += await scripts.REMOVE(
+            keys=[server_key(sid), server_tickets_key(sid), ACTIVE_SERVERS, EVENTS_STREAM],
+            args=[sid, "timed_out", stale_before, str(uuid.uuid4()), settings.events_stream_maxlen],
+        )
+    return removed
+
+
+async def require_server(server_id: str, credentials: HTTPAuthorizationCredentials | None) -> None:
+    if not await check_server_token(server_id, credentials):
+        raise APIError(404, "server_not_found", "Unknown server, register again.")
+
+
 async def active_servers() -> list[dict[str, str]]:
     """Servers with a recent heartbeat, with `server_id` and `reserved_slots` added."""
     settings = get_settings()
     now = now_ms()
     stale_before = now - settings.server_ttl_seconds * 1000
-    # Crashed servers stop heartbeating: drop them from the index (their hash expires on its own).
-    await redis.zremrangebyscore(ACTIVE_SERVERS, "-inf", stale_before)
+    # Servers that stopped heartbeating are skipped here and removed by the sweeper.
     server_ids = await redis.zrangebyscore(ACTIVE_SERVERS, stale_before, "+inf")
 
     async with redis.pipeline(transaction=False) as pipe:
@@ -61,13 +84,15 @@ async def active_servers() -> list[dict[str, str]]:
     return servers
 
 
-# --- Game servers (server secret) ---
+# --- Game servers (shared secret to register, then the server's own token) ---
 
 
 @router.post("/servers", status_code=status.HTTP_201_CREATED, dependencies=[GameServer])
 async def register_server(body: RegisterServerRequest) -> RegisterServerResponse:
+    """Returns the server's own token: the other game server routes require it."""
     settings = get_settings()
     server_id = str(uuid.uuid4())
+    server_token = secrets.token_urlsafe(32)
     key = server_key(server_id)
     async with redis.pipeline(transaction=True) as pipe:
         pipe.hset(
@@ -77,23 +102,39 @@ async def register_server(body: RegisterServerRequest) -> RegisterServerResponse
                 "status": ServerStatus.idle,
                 "players": 0,
                 "registered_at": now_ms(),
+                "token_hash": hash_server_token(server_token),
             },
         )
-        pipe.expire(key, settings.server_ttl_seconds)
+        pipe.expire(key, server_hash_ttl())
         pipe.zadd(ACTIVE_SERVERS, {server_id: now_ms()})
         await pipe.execute()
-    return RegisterServerResponse(server_id=server_id, heartbeat_interval_seconds=settings.heartbeat_interval_seconds)
+    return RegisterServerResponse(
+        server_id=server_id,
+        server_token=server_token,
+        heartbeat_interval_seconds=settings.heartbeat_interval_seconds,
+    )
 
 
-@router.put("/servers/{server_id}/heartbeat", dependencies=[GameServer], responses=SERVER_ERRORS)
-async def heartbeat(server_id: uuid.UUID, body: HeartbeatRequest) -> HeartbeatResponse:
+@router.put("/servers/{server_id}/heartbeat", responses=SERVER_ERRORS)
+async def heartbeat(server_id: uuid.UUID, body: HeartbeatRequest, credentials: Credentials) -> HeartbeatResponse:
     """Every 5 s, and right away on important changes (match started, ended, player count)."""
     if body.status == ServerStatus.reserved:
         raise APIError(400, "invalid_status", "Only an allocation can reserve a server.")
     sid = str(server_id)
+    await require_server(sid, credentials)
+    settings = get_settings()
     result = await scripts.HEARTBEAT(
-        keys=[server_key(sid), server_tickets_key(sid), ACTIVE_SERVERS],
-        args=[now_ms(), get_settings().server_ttl_seconds, body.status, body.players, body.map, sid],
+        keys=[server_key(sid), server_tickets_key(sid), ACTIVE_SERVERS, EVENTS_STREAM],
+        args=[
+            now_ms(),
+            server_hash_ttl(),
+            body.status,
+            body.players,
+            body.map,
+            sid,
+            str(uuid.uuid4()),
+            settings.events_stream_maxlen,
+        ],
     )
     if result is None:
         # Missed heartbeats for too long and was dropped: the server must register again.
@@ -106,20 +147,23 @@ async def heartbeat(server_id: uuid.UUID, body: HeartbeatRequest) -> HeartbeatRe
     )
 
 
-@router.delete("/servers/{server_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[GameServer])
-async def deregister_server(server_id: uuid.UUID) -> Response:
+@router.delete("/servers/{server_id}", status_code=status.HTTP_204_NO_CONTENT, responses={401: {"model": ErrorResponse}})
+async def deregister_server(server_id: uuid.UUID, credentials: Credentials) -> Response:
+    """Shutting down. Idempotent: an unknown (already removed) server gives the same answer."""
     sid = str(server_id)
-    async with redis.pipeline(transaction=True) as pipe:
-        pipe.delete(server_key(sid), server_tickets_key(sid))
-        pipe.zrem(ACTIVE_SERVERS, sid)
-        await pipe.execute()
+    if await check_server_token(sid, credentials):
+        await scripts.REMOVE(
+            keys=[server_key(sid), server_tickets_key(sid), ACTIVE_SERVERS, EVENTS_STREAM],
+            args=[sid, "deregistered", "", str(uuid.uuid4()), get_settings().events_stream_maxlen],
+        )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-@router.post("/tickets/verify", dependencies=[GameServer], responses={401: {"model": ErrorResponse}})
-async def verify_ticket(body: VerifyTicketRequest) -> VerifyTicketResponse:
+@router.post("/tickets/verify", responses=SERVER_ERRORS)
+async def verify_ticket(body: VerifyTicketRequest, credentials: Credentials) -> VerifyTicketResponse:
     """Called by a game server when a player connects. A ticket works once, on its own server only."""
     sid = str(body.server_id)
+    await require_server(sid, credentials)
     value = await scripts.VERIFY_TICKET(
         keys=[ticket_key(body.ticket), server_key(sid), server_tickets_key(sid)],
         args=[body.ticket, sid],

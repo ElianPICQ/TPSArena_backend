@@ -19,9 +19,10 @@ export const keys: JWTVerifyGetKey = createLocalJWKSet({
   keys: [{ ...(await exportJWK(publicKey)), kid: "test", alg: "EdDSA" }],
 });
 
-export async function token(userId: string, expiresIn: string | number = "15m"): Promise<string> {
+/** issuedAt: seconds since the epoch (default now). */
+export async function token(userId: string, expiresIn: string | number = "15m", issuedAt?: number): Promise<string> {
   return new SignJWT({}).setProtectedHeader({ alg: "EdDSA", kid: "test" }).setSubject(userId)
-    .setIssuedAt().setExpirationTime(expiresIn).sign(privateKey);
+    .setIssuedAt(issuedAt).setExpirationTime(expiresIn).sign(privateKey);
 }
 
 // --- Fake Social: GET /friends ---
@@ -106,9 +107,9 @@ export class Client {
   }
 
   /** Connect and authenticate; resolves with the hello message. */
-  static async login(instance: Instance, userId: string): Promise<Client> {
+  static async login(instance: Instance, userId: string, accessToken?: string): Promise<Client> {
     const client = await Client.open(instance);
-    client.send({ type: "auth", token: await token(userId) });
+    client.send({ type: "auth", token: accessToken ?? (await token(userId)) });
     await client.next((m) => m.type === "hello");
     return client;
   }

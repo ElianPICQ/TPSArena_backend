@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from tpsarena_common.events import AchievementUnlocked, Event, LevelUp, MatchFinished
 
 from stats import leaderboards
+from stats.events import outbox
 from stats.models import Match, MatchPlayer, PlayerAchievement, PlayerStats
 from stats.progression import ACHIEVEMENTS, level_for, xp_for
 
@@ -15,8 +16,8 @@ from stats.progression import ACHIEVEMENTS, level_for, xp_for
 async def record_match(session: AsyncSession, event: MatchFinished) -> list[Event]:
     """Store the match and update every player's totals, in one transaction.
 
-    Idempotent by match_id: a match already stored is skipped. Returns the progress events
-    (level ups, achievements) to publish once the transaction is committed.
+    Idempotent by match_id: a match already stored is skipped. The progress events (level ups,
+    achievements) go into the outbox in the same transaction; they are also returned.
     """
     inserted = await session.scalar(
         insert(Match)
@@ -88,6 +89,7 @@ async def record_match(session: AsyncSession, event: MatchFinished) -> list[Even
                     )
         updated.append(stats)
 
+    await outbox.add(session, *progress)
     await session.commit()
     for stats in updated:
         await leaderboards.update_player(stats)

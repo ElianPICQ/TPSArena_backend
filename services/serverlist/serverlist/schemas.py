@@ -33,6 +33,8 @@ class RegisterServerRequest(BaseModel):
 
 class RegisterServerResponse(BaseModel):
     server_id: uuid.UUID
+    # Send it as "Authorization: Bearer <server_token>" on every other call; keep it secret.
+    server_token: str
     heartbeat_interval_seconds: int
 
 

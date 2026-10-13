@@ -3,6 +3,7 @@ from datetime import datetime
 
 from sqlalchemy import DateTime, ForeignKey, Index, MetaData, String, func, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from tpsarena_common.outbox import outbox_table
 
 
 class Base(DeclarativeBase):
@@ -29,6 +30,8 @@ class RefreshToken(Base):
     token_hash: Mapped[str] = mapped_column(String(64), unique=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Set when /refresh swapped it for a new token: using it again means it was stolen.
+    rotated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -44,3 +47,7 @@ class EmailCode(Base):
     attempts: Mapped[int] = mapped_column(default=0)
     used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+# Events waiting to be published (see tpsarena_common.outbox).
+Outbox = outbox_table(Base.metadata)
