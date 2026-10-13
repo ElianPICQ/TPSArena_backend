@@ -1,5 +1,4 @@
 import uuid
-from pathlib import Path
 
 import jwt
 
@@ -25,8 +24,7 @@ def test_code_is_six_digits_and_hmac_matches():
 def test_access_token_claims():
     user_id = uuid.uuid4()
     token = security.create_access_token(user_id)
-    public_key = (Path(get_settings().jwt_private_key_path).parent / "jwt_public.pem").read_bytes()
-    claims = jwt.decode(token, public_key, algorithms=["EdDSA"])
+    claims = jwt.decode(token, security._public_key(), algorithms=["EdDSA"])
     assert claims["sub"] == str(user_id)
     assert claims["exp"] - claims["iat"] == get_settings().access_token_ttl_seconds
     assert jwt.get_unverified_header(token)["kid"] == get_settings().jwt_key_id

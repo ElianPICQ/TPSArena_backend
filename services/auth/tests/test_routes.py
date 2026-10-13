@@ -1,5 +1,4 @@
-"""Integration tests: need Postgres and Redis from docker compose (`docker compose up -d postgres redis`)
-with the auth migration applied (`uv run alembic upgrade head`)."""
+"""Integration tests, against the throwaway Postgres and Redis started in conftest.py."""
 
 import uuid
 from datetime import UTC, datetime, timedelta

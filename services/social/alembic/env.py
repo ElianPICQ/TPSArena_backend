@@ -2,6 +2,7 @@ import asyncio
 from logging.config import fileConfig
 
 from alembic import context
+from sqlalchemy import text
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import create_async_engine
 
@@ -17,6 +18,9 @@ SCHEMA = "social"
 
 
 def do_run_migrations(connection: Connection) -> None:
+    # The service's own database starts empty: create its schema before the first migration.
+    connection.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{SCHEMA}"'))
+    connection.commit()
     context.configure(
         connection=connection,
         target_metadata=target_metadata,

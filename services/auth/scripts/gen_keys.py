@@ -1,8 +1,7 @@
 """Generate the Ed25519 key pair used by Auth to sign JWTs.
 
-Usage: python scripts/gen_keys.py [--force]
-Writes keys/jwt_private.pem and keys/jwt_public.pem at the repository root.
-Requires the `cryptography` package (e.g. `uv run --with cryptography python scripts/gen_keys.py`).
+Usage, from services/auth: uv run python scripts/gen_keys.py [--force]
+Writes keys/jwt_private.pem and keys/jwt_public.pem in services/auth (git-ignored).
 """
 
 import sys

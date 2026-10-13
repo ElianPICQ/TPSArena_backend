@@ -1,60 +1,60 @@
-import random
 import uuid
 
 from stats.redis_client import redis
 
 from .conftest import play, result
 
-HUGE = 10**6  # far above any other row in the shared dev database (and XP = 10 x kills fits an int)
 
-
-async def ranked_players(kills: list[int]) -> list[uuid.UUID]:
-    base = HUGE + random.randint(0, 10**3) * 1000
+async def players_with_kills(kills: list[int]) -> list[uuid.UUID]:
     players = [uuid.uuid4() for _ in kills]
-    await play(*(result(p, kills=base + k, placement=i + 2) for i, (p, k) in enumerate(zip(players, kills))))
+    await play(*(result(p, kills=k, placement=i + 2) for i, (p, k) in enumerate(zip(players, kills))))
     return players
 
 
-async def test_around_with_shared_ranks(client):
-    first, tied_a, tied_b, last = await ranked_players([30, 20, 20, 10])
+async def test_top_page_with_shared_ranks(client):
+    first, tied_a, tied_b, last = await players_with_kills([30, 20, 20, 10])
 
-    r = await client.get(f"/leaderboards/kills/around/{tied_a}", params={"radius": 2})
-    assert r.status_code == 200
-    body = r.json()
-    ranks = {e["user_id"]: e["rank"] for e in body["entries"]}
-    top = ranks[str(first)]
-    assert ranks[str(tied_a)] == ranks[str(tied_b)] == top + 1
-    assert ranks[str(last)] == top + 3  # "1224" ranking
-    assert body["player_rank"] == top + 1
+    body = (await client.get("/leaderboards/kills")).json()
     assert body["type"] == "kills"
+    assert body["total_players"] == 4
+    ranks = {e["user_id"]: e["rank"] for e in body["entries"]}
+    assert ranks == {str(first): 1, str(tied_a): 2, str(tied_b): 2, str(last): 4}  # "1224" ranking
+    assert [e["value"] for e in body["entries"]] == [30, 20, 20, 10]
 
 
-async def test_top_page(client):
-    players = await ranked_players([3, 2, 1])
-    r = await client.get("/leaderboards/kills", params={"limit": 3})
-    entries = r.json()["entries"]
-    # Our players have the biggest totals of this run, unless another test made bigger ones.
-    ours = [e for e in entries if e["user_id"] in {str(p) for p in players}]
-    assert [e["user_id"] for e in ours] == [str(p) for p in players][: len(ours)]
-    assert r.json()["total_players"] >= 3
+async def test_paging(client):
+    players = await players_with_kills([5, 4, 3, 2, 1])
+    body = (await client.get("/leaderboards/kills", params={"offset": 2, "limit": 2})).json()
+    assert [e["user_id"] for e in body["entries"]] == [str(players[2]), str(players[3])]
+    assert [e["rank"] for e in body["entries"]] == [3, 4]
+
+
+async def test_around(client):
+    players = await players_with_kills([50, 40, 30, 20, 10])
+    body = (await client.get(f"/leaderboards/kills/around/{players[2]}", params={"radius": 1})).json()
+    assert body["player_rank"] == 3
+    assert [e["user_id"] for e in body["entries"]] == [str(p) for p in players[1:4]]
+
+    # At the top, the window is cut, not shifted.
+    body = (await client.get(f"/leaderboards/kills/around/{players[0]}", params={"radius": 2})).json()
+    assert [e["rank"] for e in body["entries"]] == [1, 2, 3]
 
 
 async def test_xp_and_wins_boards(client):
     p = uuid.uuid4()
-    await play(result(p, kills=HUGE, placement=1))
-    xp = (await client.get(f"/leaderboards/xp/around/{p}", params={"radius": 0})).json()
-    wins = (await client.get(f"/leaderboards/wins/around/{p}", params={"radius": 0})).json()
-    assert xp["entries"][0]["value"] == 100 + 10 * HUGE + 200
-    assert wins["entries"][0]["value"] == 1
+    await play(result(p, kills=3, placement=1))
+    xp = (await client.get("/leaderboards/xp")).json()
+    wins = (await client.get("/leaderboards/wins")).json()
+    assert xp["entries"] == [{"rank": 1, "user_id": str(p), "value": 100 + 30 + 200}]
+    assert wins["entries"] == [{"rank": 1, "user_id": str(p), "value": 1}]
 
 
 async def test_rebuilt_from_postgres_if_redis_loses_it(client):
-    first, second = await ranked_players([2, 1])
+    first, second = await players_with_kills([2, 1])
     await redis.flushdb()
 
-    body = (await client.get(f"/leaderboards/kills/around/{second}", params={"radius": 1})).json()
-    ids = [e["user_id"] for e in body["entries"]]
-    assert ids.index(str(first)) < ids.index(str(second))
+    body = (await client.get("/leaderboards/kills")).json()
+    assert [e["user_id"] for e in body["entries"]] == [str(first), str(second)]
 
 
 async def test_player_without_entry(client):

@@ -1,12 +1,32 @@
-"""Tests need Postgres (stats schema migrated) and Redis from docker compose. Redis database 12.
+"""Throwaway Postgres and Redis containers for this test run (needs Docker; nothing to start by hand).
 
-The dev database is shared, so leaderboards contain other rows: tests give their players huge
-totals and check ranks relative to each other.
+Started at import, before the app is imported: settings and clients are created at import time.
 """
 
+import atexit
 import os
+import subprocess
+import sys
+from pathlib import Path
 
-os.environ["REDIS_URL"] = "redis://localhost:6379/12"
+from testcontainers.community.redis import RedisContainer
+from testcontainers.community.postgres import PostgresContainer
+
+SERVICE_DIR = Path(__file__).resolve().parent.parent
+
+postgres = PostgresContainer("postgres:17", username="stats_svc", password="test", dbname="stats", driver="asyncpg")
+redis_container = RedisContainer("redis:7")
+postgres.start()
+redis_container.start()
+atexit.register(postgres.stop)
+atexit.register(redis_container.stop)
+
+os.environ["DATABASE_URL"] = postgres.get_connection_url()
+os.environ["REDIS_URL"] = (
+    f"redis://{redis_container.get_container_host_ip()}:{redis_container.get_exposed_port(6379)}/0"
+)
+
+subprocess.run([sys.executable, "-m", "alembic", "upgrade", "head"], cwd=SERVICE_DIR, check=True, env=os.environ)
 
 import uuid  # noqa: E402
 from datetime import UTC, datetime, timedelta  # noqa: E402
@@ -18,6 +38,9 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey 
 from jwt.algorithms import OKPAlgorithm  # noqa: E402
 from tpsarena_common.events import Event, MatchFinished, MatchPlayerResult, decode  # noqa: E402
 
+from sqlalchemy import text  # noqa: E402
+
+from stats.db import SessionLocal  # noqa: E402
 from stats.deps import verifier  # noqa: E402
 from stats.main import app  # noqa: E402
 from stats.redis_client import redis  # noqa: E402
@@ -39,7 +62,11 @@ def trust_test_key():
 
 
 @pytest.fixture(autouse=True)
-async def clean_redis():
+async def clean_state():
+    """Every test starts with empty tables and an empty Redis (this run's own containers)."""
+    async with SessionLocal() as session:
+        await session.execute(text("TRUNCATE stats.matches, stats.match_players, stats.player_stats CASCADE"))
+        await session.commit()
     await redis.flushdb()
 
 

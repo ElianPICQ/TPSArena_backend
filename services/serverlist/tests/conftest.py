@@ -1,8 +1,20 @@
-"""Tests need Redis from docker compose (`docker compose up -d redis`). They use database 15."""
+"""A throwaway Redis container for this test run (needs Docker; nothing to start by hand).
 
+Started at import, before the app is imported: settings and clients are created at import time.
+"""
+
+import atexit
 import os
 
-os.environ["REDIS_URL"] = "redis://localhost:6379/15"
+from testcontainers.community.redis import RedisContainer
+
+redis_container = RedisContainer("redis:7")
+redis_container.start()
+atexit.register(redis_container.stop)
+
+os.environ["REDIS_URL"] = (
+    f"redis://{redis_container.get_container_host_ip()}:{redis_container.get_exposed_port(6379)}/0"
+)
 os.environ["GAME_SERVER_SECRET"] = "test-game-server-secret"
 os.environ["SOCIAL_SERVICE_SECRET"] = "test-social-secret"
 

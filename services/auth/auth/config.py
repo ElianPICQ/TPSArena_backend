@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+asyncpg://auth_svc:auth_dev_password@localhost:5432/tpsarena"
     redis_url: str = "redis://localhost:6379/0"
 
-    jwt_private_key_path: Path = Path("../../keys/jwt_private.pem")
+    jwt_private_key_path: Path = Path("keys/jwt_private.pem")  # relative to services/auth
     jwt_key_id: str = "auth-1"
     access_token_ttl_seconds: int = 15 * 60
     refresh_token_ttl_days: int = 30
