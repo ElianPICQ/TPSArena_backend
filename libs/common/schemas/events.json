@@ -46,6 +46,31 @@
         "additionalProperties": false
       }
     },
+    "auth.sessions_revoked": {
+      "stream": "auth.sessions",
+      "schema": {
+        "description": "Every session of the player was revoked (password reset, or a stolen refresh token used).\n\nAccess tokens issued before `revoked_at` stay valid until they expire, so services holding\nlong-lived connections (Real-time) close them and refuse those tokens.",
+        "properties": {
+          "user_id": {
+            "format": "uuid",
+            "title": "User Id",
+            "type": "string"
+          },
+          "revoked_at": {
+            "format": "date-time",
+            "title": "Revoked At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id",
+          "revoked_at"
+        ],
+        "title": "SessionsRevoked",
+        "type": "object",
+        "additionalProperties": false
+      }
+    },
     "friend.added": {
       "stream": "social.events",
       "schema": {
@@ -516,6 +541,70 @@
           "match_id"
         ],
         "title": "LevelUp",
+        "type": "object",
+        "additionalProperties": false
+      }
+    },
+    "server.removed": {
+      "stream": "serverlist.events",
+      "schema": {
+        "description": "A game server is gone: it deregistered, or it missed its heartbeats (crashed).\n\n`party_id` is the party it was hosting, if any: no match.finished will come for it.",
+        "properties": {
+          "server_id": {
+            "format": "uuid",
+            "title": "Server Id",
+            "type": "string"
+          },
+          "party_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Party Id"
+          },
+          "reason": {
+            "enum": [
+              "timed_out",
+              "deregistered"
+            ],
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "server_id",
+          "reason"
+        ],
+        "title": "ServerRemoved",
+        "type": "object",
+        "additionalProperties": false
+      }
+    },
+    "server.reservation_expired": {
+      "stream": "serverlist.events",
+      "schema": {
+        "description": "A server reserved for a party went back to idle: the party never started the match.",
+        "properties": {
+          "server_id": {
+            "format": "uuid",
+            "title": "Server Id",
+            "type": "string"
+          },
+          "party_id": {
+            "title": "Party Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "server_id",
+          "party_id"
+        ],
+        "title": "ReservationExpired",
         "type": "object",
         "additionalProperties": false
       }

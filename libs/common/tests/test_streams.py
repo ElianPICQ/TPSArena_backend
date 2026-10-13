@@ -1,6 +1,8 @@
+import asyncio
 import uuid
 
 import pytest
+from redis.exceptions import ConnectionError
 from testcontainers.community.redis import RedisContainer
 
 from tpsarena_common.events import UserDeleted, encode, publish
@@ -87,3 +89,60 @@ async def test_undecodable_message_is_dropped(redis):
     await redis.xadd(STREAM, {"event_id": str(uuid.uuid4()), "type": "who.knows", "data": "{}"})
     await consumer.poll_once()
     assert (await redis.xpending(STREAM, "test-group"))["pending"] == 0
+
+
+async def test_survives_a_lost_connection(redis):
+    seen = []
+
+    async def handler(e):
+        seen.append(e)
+
+    consumer = make_consumer(redis, handler, retry_delay=0.01)
+    real_poll = consumer.poll_once
+    failures = 2
+
+    async def flaky_poll():
+        nonlocal failures
+        if failures:
+            failures -= 1
+            raise ConnectionError("Connection closed by server.")
+        await real_poll()
+
+    consumer.poll_once = flaky_poll
+    e = UserDeleted(user_id=uuid.uuid4())
+    await publish(redis, e)
+    task = asyncio.create_task(consumer.run())
+    try:
+        await wait_for(lambda: seen == [e])
+    finally:
+        task.cancel()
+    assert failures == 0
+
+
+async def test_recreates_a_lost_group(redis):
+    seen = []
+
+    async def handler(e):
+        seen.append(e)
+
+    consumer = make_consumer(redis, handler, retry_delay=0.01)
+    task = asyncio.create_task(consumer.run())
+    try:
+        await wait_for(lambda: redis.exists(STREAM))
+        await redis.delete(STREAM)  # the group goes with it, like a Redis that lost its data
+        e = UserDeleted(user_id=uuid.uuid4())
+        await publish(redis, e)
+        await wait_for(lambda: seen == [e])
+    finally:
+        task.cancel()
+
+
+async def wait_for(condition, timeout: float = 5.0) -> None:
+    async with asyncio.timeout(timeout):
+        while True:
+            result = condition()
+            if asyncio.iscoroutine(result):
+                result = await result
+            if result:
+                return
+            await asyncio.sleep(0.02)

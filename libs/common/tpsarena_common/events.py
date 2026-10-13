@@ -75,6 +75,18 @@ class UserDeleted(Event):
     user_id: uuid.UUID
 
 
+@event("auth.sessions", "auth.sessions_revoked")
+class SessionsRevoked(Event):
+    """Every session of the player was revoked (password reset, or a stolen refresh token used).
+
+    Access tokens issued before `revoked_at` stay valid until they expire, so services holding
+    long-lived connections (Real-time) close them and refuse those tokens.
+    """
+
+    user_id: uuid.UUID
+    revoked_at: datetime
+
+
 # --- Real-time ---
 
 
@@ -82,6 +94,29 @@ class UserDeleted(Event):
 class PresenceChanged(Event):
     user_id: uuid.UUID
     status: Literal["online", "offline"]
+
+
+# --- Server List (all on serverlist.events) ---
+
+
+@event("serverlist.events", "server.removed")
+class ServerRemoved(Event):
+    """A game server is gone: it deregistered, or it missed its heartbeats (crashed).
+
+    `party_id` is the party it was hosting, if any: no match.finished will come for it.
+    """
+
+    server_id: uuid.UUID
+    party_id: str | None = None
+    reason: Literal["timed_out", "deregistered"]
+
+
+@event("serverlist.events", "server.reservation_expired")
+class ReservationExpired(Event):
+    """A server reserved for a party went back to idle: the party never started the match."""
+
+    server_id: uuid.UUID
+    party_id: str
 
 
 # --- Game servers ---

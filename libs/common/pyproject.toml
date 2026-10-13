@@ -1,7 +1,7 @@
 [project]
 name = "tpsarena-common"
 version = "0.2.0"
-description = "Shared code for the TPSArena Python services: JWT verification, event models, stream consumer base"
+description = "Shared code for the TPSArena Python services: JWT verification, event models, stream consumer, outbox"
 requires-python = ">=3.13"
 dependencies = [
     "fastapi>=0.115",
@@ -11,12 +11,17 @@ dependencies = [
     "redis>=5.2",
 ]
 
+[project.optional-dependencies]
+outbox = ["sqlalchemy[asyncio]>=2.0"]
+
 [dependency-groups]
 dev = [
+    "asyncpg>=0.30",
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
     "respx>=0.21",
-    "testcontainers[redis]>=4.8",
+    "sqlalchemy[asyncio]>=2.0",
+    "testcontainers[postgres,redis]>=4.8",
 ]
 
 [build-system]

@@ -6,6 +6,8 @@
 - Delivery is at least once: event ids already handled are skipped. The "handled" markers are
   stored under the service's own key prefix (e.g. `social:handled:...`), like all its keys.
 - Events that can't be decoded are logged and acknowledged, so they don't block the group.
+- A lost Redis connection doesn't stop the consumer: it waits (with backoff) and resumes, and
+  recreates its consumer groups if Redis came back without them.
 """
 
 import asyncio
@@ -15,7 +17,9 @@ from collections.abc import Awaitable, Callable
 
 from pydantic import ValidationError
 from redis.asyncio import Redis
-from redis.exceptions import ResponseError
+from redis.asyncio.retry import Retry
+from redis.backoff import ExponentialBackoff
+from redis.exceptions import ConnectionError, ResponseError, TimeoutError
 
 from tpsarena_common.events import Event, UnknownEvent, decode
 
@@ -25,8 +29,15 @@ Handler = Callable[[Event], Awaitable[None]]
 
 
 def consumer_redis(url: str, block_ms: int = 5000) -> Redis:
-    """A client whose socket timeout outlasts the blocking XREADGROUP."""
-    return Redis.from_url(url, decode_responses=True, socket_timeout=block_ms / 1000 + 10)
+    """A client whose socket timeout outlasts the blocking XREADGROUP, and that reconnects on its own."""
+    return Redis.from_url(
+        url,
+        decode_responses=True,
+        socket_timeout=block_ms / 1000 + 10,
+        retry=Retry(ExponentialBackoff(cap=1, base=0.05), retries=3),
+        retry_on_error=[ConnectionError, TimeoutError],
+        health_check_interval=30,
+    )
 
 
 class StreamConsumer:
@@ -41,6 +52,8 @@ class StreamConsumer:
         block_ms: int = 5000,
         claim_idle_ms: int = 60_000,
         handled_ttl_seconds: int = 7 * 24 * 3600,
+        retry_delay: float = 1.0,
+        max_retry_delay: float = 30.0,
     ):
         self.redis = redis
         self.key_prefix = key_prefix
@@ -51,6 +64,8 @@ class StreamConsumer:
         self.block_ms = block_ms
         self.claim_idle_ms = claim_idle_ms
         self.handled_ttl_seconds = handled_ttl_seconds
+        self.retry_delay = retry_delay
+        self.max_retry_delay = max_retry_delay
 
     async def ensure_groups(self) -> None:
         for stream in self.streams:
@@ -100,12 +115,28 @@ class StreamConsumer:
                 await self.handle(stream, message_id, fields)
 
     async def run(self) -> None:
-        await self.ensure_groups()
-        log.info("Consuming %s as %s/%s", ", ".join(self.streams), self.group, self.consumer)
         loop = asyncio.get_running_loop()
         last_reclaim = float("-inf")
+        groups_ready = False
+        delay = self.retry_delay
         while True:
-            if loop.time() - last_reclaim > self.claim_idle_ms / 1000:
-                await self.reclaim()
-                last_reclaim = loop.time()
-            await self.poll_once()
+            try:
+                if not groups_ready:
+                    await self.ensure_groups()
+                    groups_ready = True
+                    log.info("Consuming %s as %s/%s", ", ".join(self.streams), self.group, self.consumer)
+                if loop.time() - last_reclaim > self.claim_idle_ms / 1000:
+                    await self.reclaim()
+                    last_reclaim = loop.time()
+                await self.poll_once()
+                delay = self.retry_delay
+            except (ConnectionError, TimeoutError) as exc:
+                log.warning("Redis unavailable (%r), retrying in %.1f s", exc, delay)
+                await asyncio.sleep(delay)
+                delay = min(delay * 2, self.max_retry_delay)
+            except ResponseError as exc:
+                if "NOGROUP" not in str(exc):
+                    raise
+                # Redis came back without its data (e.g. no persistence): create the groups again.
+                log.warning("Consumer group %s is missing, creating it again", self.group)
+                groups_ready = False
