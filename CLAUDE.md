@@ -8,6 +8,7 @@ TPSArena: a third-person free-for-all multiplayer shooter. The client and dedica
 
 - **`project-context.md` is the design spec**: settled decisions on services, Redis keys, streams, flows and API outline. Read it before adding a service or endpoint, follow it unless the user says otherwise, and update it when a decision changes.
 - **`TODO.md`** lists known gaps and deferred design issues. Remove an item when it is done, and add new gaps there instead of leaving them only in code comments.
+- **`README.md`** is the human-facing overview (services, running the stack, status). Keep its status section in line with `TODO.md`.
 
 Every backend service in the spec is implemented: `services/{auth,serverlist,social,stats,bff,realtime}` and the shared package `libs/common`. The Godot client and the dedicated game server don't exist yet. The game server's events (`player.match`, `match.finished`) are defined, and tests publish them by hand.
 
@@ -17,8 +18,8 @@ Development happens on both Debian and Windows 11 (Docker Desktop + WSL 2). Keep
 
 | Path | What | Port |
 |---|---|---|
-| `services/auth` | Auth / Users API (FastAPI) + worker (code emails, outbox) | 8001 |
-| `services/serverlist` | Game server registry, public list, party allocation, join tickets (FastAPI, Redis only) | 8002 |
+| `services/auth` | Auth / Users API (FastAPI) + worker (code emails, outbox, hourly cleanup) | 8001 |
+| `services/serverlist` | Game server registry, public list, party allocation, join tickets (FastAPI, Redis only; the sweeper for crashed servers runs in the API process) | 8002 |
 | `services/social` | Profiles, friends, parties (FastAPI) + worker | 8003 |
 | `services/stats` | Match results, history, progression, leaderboards (FastAPI) + worker | 8004 |
 | `services/realtime` | WebSocket service: presence, chat, pushes (TypeScript, Node 24+). Client protocol: `PROTOCOL.md` | 8005 |
@@ -77,7 +78,7 @@ python scripts/release_common.py X.Y.Z [--dry-run]         # release libs/common
 - **PostgreSQL:** each service has its own database. Inside it, tables live in a schema named after the service (`MetaData(schema=...)`). Alembic's `env.py` creates that schema and keeps its version table there. Containers apply migrations at startup. Real-time uses plain SQL files in `migrations/`.
 - **Redis:** one shared instance with AOF persistence on.
   - Every key starts with its service's prefix (`auth:`, `serverlist:`, `social:`, `stats:`, `realtime:`). Only stream names are shared.
-  - Each service has an ACL user: its own prefix, read/write on the streams it consumes, write-only on the streams it only publishes, and `-@dangerous`. Lua scripts must receive every key through `KEYS`, and those keys need read/write permission.
+  - Each service has an ACL user: its own prefix, read/write on the streams it consumes, write-only on the streams it only publishes, and `-@dangerous`. Lua scripts must receive every key through `KEYS`, and those keys need read/write permission. That is why the Server List and Social have read/write on the streams their scripts publish to (`serverlist.events`, `social.events`).
   - The `default` user must keep full rights, or the AOF replay drops transactions.
   - Service clients don't call `INFO`.
 - **Streams:**
@@ -89,7 +90,7 @@ python scripts/release_common.py X.Y.Z [--dry-run]         # release libs/common
     - Survive Redis outages.
   - **Publishers:**
     - An event about a PostgreSQL change goes through the service's **outbox**: `await outbox.add(session, event)` before the commit, then `await outbox.try_flush()` after it. Workers publish whatever is left.
-    - An event about Redis-only state is published directly, or from inside the Lua script that makes the change (Server List).
+    - An event about Redis-only state is added by the same Lua script or `MULTI` that makes the change, so the two can't be separated. This applies to Server List events and Social party events and invites. The script builds the `data` JSON itself, so the tests decode those events with the shared models.
   - The two TypeScript twins must keep behaving like the Python originals: `jwt.ts` (same error codes) and `streams.ts`.
 - **Errors:** services raise `APIError(status, error_code, message)`, which is rendered as `{"error": ..., "message": ...}`. The game client branches on the `error` codes, so they are API contract. The same goes for WebSocket close codes and reasons (see `PROTOCOL.md`).
 - **BFF:**
