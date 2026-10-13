@@ -5,6 +5,10 @@ Services pin a released version (git tag `common-vX.Y.Z`). Add changes under "Un
 
 ## Unreleased
 
+- `PlayerMatchChanged` event (`player.match` stream): a player joined or left a match.
+- `export_schemas`: every event format as JSON Schema in `schemas/events.json` (released with
+  the package), the contract for services not written in Python (Real-time, TypeScript).
+
 ## 0.1.0
 
 - JWT verification with Auth's JWKS (`jwt_auth.JWKSVerifier`), cached, refetched on an unknown `kid`.

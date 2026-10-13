@@ -87,6 +87,15 @@ class PresenceChanged(Event):
 # --- Game servers ---
 
 
+@event("player.match", "player.match")
+class PlayerMatchChanged(Event):
+    """Published by the game server when a player joins or leaves its match (presence "in match")."""
+
+    user_id: uuid.UUID
+    server_id: uuid.UUID
+    action: Literal["joined", "left"]
+
+
 class MatchPlayerResult(BaseModel):
     user_id: uuid.UUID
     kills: int = Field(ge=0)

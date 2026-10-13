@@ -1,0 +1,542 @@
+{
+  "package": "tpsarena-common",
+  "envelope": {
+    "fields": [
+      "event_id",
+      "type",
+      "data"
+    ],
+    "description": "Stream entries: event_id (UUID string), type (key below), data (JSON matching the schema)."
+  },
+  "events": {
+    "auth.code_email": {
+      "stream": "auth.emails",
+      "schema": {
+        "description": "Internal to Auth: the worker sends the email.",
+        "properties": {
+          "kind": {
+            "enum": [
+              "verify",
+              "reset"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "email": {
+            "title": "Email",
+            "type": "string"
+          },
+          "username": {
+            "title": "Username",
+            "type": "string"
+          },
+          "code": {
+            "title": "Code",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "email",
+          "username",
+          "code"
+        ],
+        "title": "CodeEmail",
+        "type": "object",
+        "additionalProperties": false
+      }
+    },
+    "friend.added": {
+      "stream": "social.events",
+      "schema": {
+        "properties": {
+          "user_id": {
+            "format": "uuid",
+            "title": "User Id",
+            "type": "string"
+          },
+          "friend_id": {
+            "format": "uuid",
+            "title": "Friend Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id",
+          "friend_id"
+        ],
+        "title": "FriendAdded",
+        "type": "object",
+        "additionalProperties": false
+      }
+    },
+    "friend.removed": {
+      "stream": "social.events",
+      "schema": {
+        "properties": {
+          "user_id": {
+            "format": "uuid",
+            "title": "User Id",
+            "type": "string"
+          },
+          "friend_id": {
+            "format": "uuid",
+            "title": "Friend Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id",
+          "friend_id"
+        ],
+        "title": "FriendRemoved",
+        "type": "object",
+        "additionalProperties": false
+      }
+    },
+    "friend.request_removed": {
+      "stream": "social.events",
+      "schema": {
+        "description": "Declined by the recipient or cancelled by the sender.",
+        "properties": {
+          "request_id": {
+            "format": "uuid",
+            "title": "Request Id",
+            "type": "string"
+          },
+          "from_user_id": {
+            "format": "uuid",
+            "title": "From User Id",
+            "type": "string"
+          },
+          "to_user_id": {
+            "format": "uuid",
+            "title": "To User Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "request_id",
+          "from_user_id",
+          "to_user_id"
+        ],
+        "title": "FriendRequestRemoved",
+        "type": "object",
+        "additionalProperties": false
+      }
+    },
+    "friend.request_sent": {
+      "stream": "social.events",
+      "schema": {
+        "properties": {
+          "request_id": {
+            "format": "uuid",
+            "title": "Request Id",
+            "type": "string"
+          },
+          "from_user_id": {
+            "format": "uuid",
+            "title": "From User Id",
+            "type": "string"
+          },
+          "to_user_id": {
+            "format": "uuid",
+            "title": "To User Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "request_id",
+          "from_user_id",
+          "to_user_id"
+        ],
+        "title": "FriendRequestSent",
+        "type": "object",
+        "additionalProperties": false
+      }
+    },
+    "match.finished": {
+      "stream": "match.finished",
+      "schema": {
+        "$defs": {
+          "MatchPlayerResult": {
+            "properties": {
+              "user_id": {
+                "format": "uuid",
+                "title": "User Id",
+                "type": "string"
+              },
+              "kills": {
+                "minimum": 0,
+                "title": "Kills",
+                "type": "integer"
+              },
+              "deaths": {
+                "minimum": 0,
+                "title": "Deaths",
+                "type": "integer"
+              },
+              "placement": {
+                "minimum": 1,
+                "title": "Placement",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "user_id",
+              "kills",
+              "deaths",
+              "placement"
+            ],
+            "title": "MatchPlayerResult",
+            "type": "object"
+          }
+        },
+        "description": "Published by the game server when a match ends. Consumed by Stats (results) and Social (party back to lobby).\n\n`players` holds everyone who played, including players who left before the end.",
+        "properties": {
+          "match_id": {
+            "format": "uuid",
+            "title": "Match Id",
+            "type": "string"
+          },
+          "server_id": {
+            "format": "uuid",
+            "title": "Server Id",
+            "type": "string"
+          },
+          "party_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Party Id"
+          },
+          "map": {
+            "title": "Map",
+            "type": "string"
+          },
+          "started_at": {
+            "format": "date-time",
+            "title": "Started At",
+            "type": "string"
+          },
+          "ended_at": {
+            "format": "date-time",
+            "title": "Ended At",
+            "type": "string"
+          },
+          "players": {
+            "items": {
+              "$ref": "#/$defs/MatchPlayerResult"
+            },
+            "title": "Players",
+            "type": "array"
+          }
+        },
+        "required": [
+          "match_id",
+          "server_id",
+          "map",
+          "started_at",
+          "ended_at",
+          "players"
+        ],
+        "title": "MatchFinished",
+        "type": "object",
+        "additionalProperties": false
+      }
+    },
+    "party.disbanded": {
+      "stream": "social.events",
+      "schema": {
+        "properties": {
+          "party_id": {
+            "title": "Party Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "party_id"
+        ],
+        "title": "PartyDisbanded",
+        "type": "object",
+        "additionalProperties": false
+      }
+    },
+    "party.invite_sent": {
+      "stream": "social.events",
+      "schema": {
+        "properties": {
+          "invite_id": {
+            "title": "Invite Id",
+            "type": "string"
+          },
+          "party_id": {
+            "title": "Party Id",
+            "type": "string"
+          },
+          "from_user_id": {
+            "format": "uuid",
+            "title": "From User Id",
+            "type": "string"
+          },
+          "to_user_id": {
+            "format": "uuid",
+            "title": "To User Id",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "invite_id",
+          "party_id",
+          "from_user_id",
+          "to_user_id",
+          "expires_at"
+        ],
+        "title": "PartyInviteSent",
+        "type": "object",
+        "additionalProperties": false
+      }
+    },
+    "party.match_ready": {
+      "stream": "social.events",
+      "schema": {
+        "description": "Each member gets the address and only their own ticket.",
+        "properties": {
+          "party_id": {
+            "title": "Party Id",
+            "type": "string"
+          },
+          "server_id": {
+            "format": "uuid",
+            "title": "Server Id",
+            "type": "string"
+          },
+          "address": {
+            "title": "Address",
+            "type": "string"
+          },
+          "port": {
+            "title": "Port",
+            "type": "integer"
+          },
+          "tickets": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "format": "uuid"
+            },
+            "title": "Tickets",
+            "type": "object"
+          }
+        },
+        "required": [
+          "party_id",
+          "server_id",
+          "address",
+          "port",
+          "tickets"
+        ],
+        "title": "PartyMatchReady",
+        "type": "object",
+        "additionalProperties": false
+      }
+    },
+    "party.updated": {
+      "stream": "social.events",
+      "schema": {
+        "description": "Full snapshot of the party. Keep the highest `version`: snapshots can arrive out of order.",
+        "properties": {
+          "party_id": {
+            "title": "Party Id",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          },
+          "leader_id": {
+            "format": "uuid",
+            "title": "Leader Id",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "lobby",
+              "launching",
+              "in_match"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "member_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Member Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "party_id",
+          "version",
+          "leader_id",
+          "status",
+          "member_ids"
+        ],
+        "title": "PartyUpdated",
+        "type": "object",
+        "additionalProperties": false
+      }
+    },
+    "player.match": {
+      "stream": "player.match",
+      "schema": {
+        "description": "Published by the game server when a player joins or leaves its match (presence \"in match\").",
+        "properties": {
+          "user_id": {
+            "format": "uuid",
+            "title": "User Id",
+            "type": "string"
+          },
+          "server_id": {
+            "format": "uuid",
+            "title": "Server Id",
+            "type": "string"
+          },
+          "action": {
+            "enum": [
+              "joined",
+              "left"
+            ],
+            "title": "Action",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id",
+          "server_id",
+          "action"
+        ],
+        "title": "PlayerMatchChanged",
+        "type": "object",
+        "additionalProperties": false
+      }
+    },
+    "presence.changed": {
+      "stream": "presence.changed",
+      "schema": {
+        "properties": {
+          "user_id": {
+            "format": "uuid",
+            "title": "User Id",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "online",
+              "offline"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id",
+          "status"
+        ],
+        "title": "PresenceChanged",
+        "type": "object",
+        "additionalProperties": false
+      }
+    },
+    "progress.achievement_unlocked": {
+      "stream": "stats.progress",
+      "schema": {
+        "properties": {
+          "user_id": {
+            "format": "uuid",
+            "title": "User Id",
+            "type": "string"
+          },
+          "achievement_id": {
+            "title": "Achievement Id",
+            "type": "string"
+          },
+          "match_id": {
+            "format": "uuid",
+            "title": "Match Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id",
+          "achievement_id",
+          "match_id"
+        ],
+        "title": "AchievementUnlocked",
+        "type": "object",
+        "additionalProperties": false
+      }
+    },
+    "progress.level_up": {
+      "stream": "stats.progress",
+      "schema": {
+        "properties": {
+          "user_id": {
+            "format": "uuid",
+            "title": "User Id",
+            "type": "string"
+          },
+          "level": {
+            "title": "Level",
+            "type": "integer"
+          },
+          "match_id": {
+            "format": "uuid",
+            "title": "Match Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id",
+          "level",
+          "match_id"
+        ],
+        "title": "LevelUp",
+        "type": "object",
+        "additionalProperties": false
+      }
+    },
+    "user.deleted": {
+      "stream": "user.deleted",
+      "schema": {
+        "properties": {
+          "user_id": {
+            "format": "uuid",
+            "title": "User Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id"
+        ],
+        "title": "UserDeleted",
+        "type": "object",
+        "additionalProperties": false
+      }
+    }
+  }
+}
