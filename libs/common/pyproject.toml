@@ -1,6 +1,6 @@
 [project]
 name = "tpsarena-common"
-version = "0.1.0"
+version = "0.2.0"
 description = "Shared code for the TPSArena Python services: JWT verification, event models, stream consumer base"
 requires-python = ">=3.13"
 dependencies = [
