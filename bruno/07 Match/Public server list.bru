@@ -1,0 +1,23 @@
+meta {
+  name: Public server list
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{bffUrl}}/servers?build_version={{buildVersion}}
+  auth: bearer
+}
+
+params:query {
+  build_version: {{buildVersion}}
+}
+
+auth:bearer {
+  token: {{aliceAccess}}
+}
+
+tests {
+  test("status 200", () => expect(res.status).to.equal(200));
+  test("our match is listed", () => expect(res.body.servers.map((s) => s.server_id)).to.include(bru.getVar("serverId")));
+}

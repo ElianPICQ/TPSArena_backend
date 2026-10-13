@@ -1,0 +1,15 @@
+meta {
+  name: Server List health
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{serverlistUrl}}/health
+  auth: none
+}
+
+tests {
+  test("status 200", () => expect(res.status).to.equal(200));
+  test("ok", () => expect(res.body.status).to.equal("ok"));
+}

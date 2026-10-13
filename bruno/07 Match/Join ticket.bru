@@ -1,0 +1,19 @@
+meta {
+  name: Join ticket
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{bffUrl}}/servers/{{serverId}}/join-ticket
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{bobAccess}}
+}
+
+tests {
+  test("status 201", () => expect(res.status).to.equal(201));
+  test("ticket and address", () => expect(res.body.ticket).to.be.a("string"));
+}

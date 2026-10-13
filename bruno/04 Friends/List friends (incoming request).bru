@@ -1,0 +1,19 @@
+meta {
+  name: List friends (incoming request)
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{bffUrl}}/friends
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{bobAccess}}
+}
+
+tests {
+  test("status 200", () => expect(res.status).to.equal(200));
+  test("incoming request", () => expect(res.body.incoming.map((r) => r.request_id)).to.include(bru.getVar("requestId")));
+}

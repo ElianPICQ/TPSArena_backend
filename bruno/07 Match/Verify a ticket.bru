@@ -1,0 +1,27 @@
+meta {
+  name: Verify a ticket
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{serverlistUrl}}/tickets/verify
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{serverToken}}
+}
+
+body:json {
+  {
+    "ticket": "{{aliceTicket}}",
+    "server_id": "{{serverId}}"
+  }
+}
+
+tests {
+  test("status 200", () => expect(res.status).to.equal(200));
+  test("Alice", () => expect(res.body.user_id).to.equal(bru.getVar("aliceId")));
+}

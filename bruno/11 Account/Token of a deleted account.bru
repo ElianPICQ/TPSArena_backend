@@ -1,0 +1,19 @@
+meta {
+  name: Token of a deleted account
+  type: http
+  seq: 10
+}
+
+get {
+  url: {{bffUrl}}/auth/me
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{aliceAccess}}
+}
+
+tests {
+  test("status 401", () => expect(res.status).to.equal(401));
+  test("invalid_token", () => expect(res.body.error).to.equal("invalid_token"));
+}

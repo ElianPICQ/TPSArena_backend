@@ -1,0 +1,22 @@
+meta {
+  name: Progression
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{bffUrl}}/progression/{{aliceId}}
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{aliceAccess}}
+}
+
+tests {
+  test("status 200", () => expect(res.status).to.equal(200));
+  test("level 1, all achievements listed", () => {
+    expect(res.body.level).to.equal(1);
+    expect(res.body.achievements).to.have.lengthOf(7);
+  });
+}

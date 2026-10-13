@@ -1,0 +1,40 @@
+meta {
+  name: Register a game server
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{serverlistUrl}}/servers
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{gameServerSecret}}
+}
+
+body:json {
+  {
+    "name": "Bruno server",
+    "address": "127.0.0.1",
+    "port": 7777,
+    "region": "eu",
+    "map": "arena",
+    "build_version": "{{buildVersion}}"
+  }
+}
+
+script:post-response {
+  bru.setVar("serverId", res.body.server_id);
+  bru.setVar("serverToken", res.body.server_token);
+}
+
+tests {
+  test("status 201", () => expect(res.status).to.equal(201));
+  test("own token", () => expect(res.body.server_token).to.be.a("string"));
+}
+
+docs {
+  Uses the shared GAME_SERVER_SECRET; every later call uses the returned server_token.
+}

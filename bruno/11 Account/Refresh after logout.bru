@@ -1,0 +1,22 @@
+meta {
+  name: Refresh after logout
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{bffUrl}}/auth/refresh
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "refresh_token": "{{aliceRefresh}}"
+  }
+}
+
+tests {
+  test("status 401", () => expect(res.status).to.equal(401));
+  test("invalid_refresh_token", () => expect(res.body.error).to.equal("invalid_refresh_token"));
+}

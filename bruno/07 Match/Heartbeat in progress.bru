@@ -1,0 +1,27 @@
+meta {
+  name: Heartbeat in progress
+  type: http
+  seq: 3
+}
+
+put {
+  url: {{serverlistUrl}}/servers/{{serverId}}/heartbeat
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{serverToken}}
+}
+
+body:json {
+  {
+    "status": "in_progress",
+    "players": 1,
+    "map": "arena"
+  }
+}
+
+tests {
+  test("status 200", () => expect(res.status).to.equal(200));
+}

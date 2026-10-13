@@ -1,0 +1,18 @@
+meta {
+  name: Deregister the second server
+  type: http
+  seq: 4
+}
+
+delete {
+  url: {{serverlistUrl}}/servers/{{server2Id}}
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{server2Token}}
+}
+
+tests {
+  test("status 204", () => expect(res.status).to.equal(204));
+}

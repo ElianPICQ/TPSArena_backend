@@ -1,0 +1,23 @@
+meta {
+  name: Leaderboard around a player
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{bffUrl}}/leaderboards/wins/around/{{aliceId}}?radius=5
+  auth: bearer
+}
+
+params:query {
+  radius: 5
+}
+
+auth:bearer {
+  token: {{aliceAccess}}
+}
+
+tests {
+  test("status 200", () => expect(res.status).to.equal(200));
+  test("not ranked yet", () => expect(res.body.player_rank).to.equal(null));
+}

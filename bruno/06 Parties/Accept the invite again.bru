@@ -1,0 +1,19 @@
+meta {
+  name: Accept the invite again
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{bffUrl}}/invites/{{inviteId}}/accept
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{bobAccess}}
+}
+
+tests {
+  test("status 200", () => expect(res.status).to.equal(200));
+  test("two members", () => expect(res.body.member_ids).to.have.lengthOf(2));
+}

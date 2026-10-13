@@ -1,0 +1,15 @@
+meta {
+  name: Real-time health
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{realtimeUrl}}/health
+  auth: none
+}
+
+tests {
+  test("status 200", () => expect(res.status).to.equal(200));
+  test("ok", () => expect(res.body.status).to.equal("ok"));
+}

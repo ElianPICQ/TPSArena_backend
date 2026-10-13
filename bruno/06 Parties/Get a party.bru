@@ -1,0 +1,19 @@
+meta {
+  name: Get a party
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{bffUrl}}/parties/{{partyId}}
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{aliceAccess}}
+}
+
+tests {
+  test("status 200", () => expect(res.status).to.equal(200));
+  test("names added by the BFF", () => expect(res.body.members[0].username).to.equal(bru.getVar("aliceName")));
+}

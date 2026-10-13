@@ -1,0 +1,22 @@
+meta {
+  name: Deregister the game server
+  type: http
+  seq: 6
+}
+
+delete {
+  url: {{serverlistUrl}}/servers/{{serverId}}
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{serverToken}}
+}
+
+tests {
+  test("status 204", () => expect(res.status).to.equal(204));
+}
+
+docs {
+  Publishes server.removed: Social puts the party back to the lobby.
+}

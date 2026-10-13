@@ -1,0 +1,28 @@
+meta {
+  name: Login Alice
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{bffUrl}}/auth/login
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "email": "{{aliceEmail}}",
+    "password": "{{password}}"
+  }
+}
+
+script:post-response {
+  bru.setVar("aliceAccess", res.body.access_token);
+  bru.setVar("aliceRefresh", res.body.refresh_token);
+}
+
+tests {
+  test("status 200", () => expect(res.status).to.equal(200));
+  test("bearer tokens", () => expect(res.body.token_type).to.equal("bearer"));
+}

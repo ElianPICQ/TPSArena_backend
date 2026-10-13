@@ -1,0 +1,35 @@
+meta {
+  name: Register a second game server
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{serverlistUrl}}/servers
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{gameServerSecret}}
+}
+
+body:json {
+  {
+    "name": "Bruno server 2",
+    "address": "127.0.0.1",
+    "port": 7778,
+    "region": "eu",
+    "map": "arena",
+    "build_version": "{{buildVersion}}"
+  }
+}
+
+script:post-response {
+  bru.setVar("server2Id", res.body.server_id);
+  bru.setVar("server2Token", res.body.server_token);
+}
+
+tests {
+  test("status 201", () => expect(res.status).to.equal(201));
+}

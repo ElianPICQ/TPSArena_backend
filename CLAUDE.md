@@ -111,4 +111,5 @@ python scripts/release_common.py X.Y.Z [--dry-run]         # release libs/common
 - Everything is async: SQLAlchemy async + asyncpg, `redis.asyncio`, `httpx`, `aiosmtplib`. Settings come from `pydantic-settings` (`get_settings()`, cached with `lru_cache`).
 - **SMTP** is configured only through env (`SMTP_*`): Mailpit locally, a Gmail app password for the alpha.
 - **Secrets:** Auth, Server List and Social refuse `change-me-dev-*` or short secrets unless `ENVIRONMENT=development`. That is the default in the dev compose files and `.env.example`; tests set it in `conftest.py`. A new secret setting goes in the service's `SECRETS` tuple (`config.py`).
+- **Bruno collection (`bruno/`):** it covers every HTTP endpoint as one scenario run against the full stack (`npx @usebruno/cli run --env Local` from `bruno/`). When you add or change an endpoint, add or update its request there.
 - **Dev rate limits:** repeated end-to-end runs from one machine hit Auth's per-IP verify limit (`429`). Clear `auth:ratelimit:verify_*` in the dev Redis, or wait 15 minutes.

@@ -1,0 +1,21 @@
+meta {
+  name: Resend verification code
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{bffUrl}}/auth/verify-email/resend
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "email": "{{aliceEmail}}"
+  }
+}
+
+tests {
+  test("status 202", () => expect(res.status).to.equal(202));
+}

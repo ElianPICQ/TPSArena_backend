@@ -1,0 +1,29 @@
+meta {
+  name: Send a friend request again
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{bffUrl}}/friends/requests
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{aliceAccess}}
+}
+
+body:json {
+  {
+    "user_id": "{{bobId}}"
+  }
+}
+
+script:post-response {
+  bru.setVar("requestId", res.body.request_id);
+}
+
+tests {
+  test("status 201", () => expect(res.status).to.equal(201));
+}

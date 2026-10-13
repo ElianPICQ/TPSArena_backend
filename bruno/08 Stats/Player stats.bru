@@ -1,0 +1,19 @@
+meta {
+  name: Player stats
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{bffUrl}}/players/{{aliceId}}/stats
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{aliceAccess}}
+}
+
+tests {
+  test("status 200", () => expect(res.status).to.equal(200));
+  test("no match yet", () => expect(res.body.matches_played).to.equal(0));
+}

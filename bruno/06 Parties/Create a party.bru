@@ -1,0 +1,23 @@
+meta {
+  name: Create a party
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{bffUrl}}/parties
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{aliceAccess}}
+}
+
+script:post-response {
+  bru.setVar("partyId", res.body.party_id);
+}
+
+tests {
+  test("status 201", () => expect(res.status).to.equal(201));
+  test("Alice leads", () => expect(res.body.leader_id).to.equal(bru.getVar("aliceId")));
+}

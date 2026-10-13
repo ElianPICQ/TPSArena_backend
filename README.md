@@ -63,6 +63,11 @@ curl -X POST localhost:8000/auth/verify-email -H 'content-type: application/json
   -d '{"email": "alice@example.dev", "code": "123456"}'     # returns the access and refresh tokens
 ```
 
+To exercise every endpoint at once, open [`bruno/`](bruno) in [Bruno](https://www.usebruno.com/) and run the
+collection with the `Local` environment, or run `npx @usebruno/cli run --env Local` from that folder.
+It creates two players, reads their codes from Mailpit, goes through friends, a party launch, a
+match and stats, and deletes both accounts at the end.
+
 Each service can also run alone, with its own database and Redis, from its own folder. Run
 `docker compose --profile standalone up --build` there. Its README has the details.
 

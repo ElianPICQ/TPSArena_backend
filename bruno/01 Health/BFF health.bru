@@ -1,0 +1,15 @@
+meta {
+  name: BFF health
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{bffUrl}}/health
+  auth: none
+}
+
+tests {
+  test("status 200", () => expect(res.status).to.equal(200));
+  test("ok", () => expect(res.body.status).to.equal("ok"));
+}

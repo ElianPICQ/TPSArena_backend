@@ -1,0 +1,23 @@
+meta {
+  name: Login before verifying
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{bffUrl}}/auth/login
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "email": "{{aliceEmail}}",
+    "password": "{{password}}"
+  }
+}
+
+tests {
+  test("status 403", () => expect(res.status).to.equal(403));
+  test("email_not_verified", () => expect(res.body.error).to.equal("email_not_verified"));
+}

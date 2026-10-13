@@ -1,0 +1,15 @@
+meta {
+  name: Social health
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{socialUrl}}/health
+  auth: none
+}
+
+tests {
+  test("status 200", () => expect(res.status).to.equal(200));
+  test("ok", () => expect(res.body.status).to.equal("ok"));
+}

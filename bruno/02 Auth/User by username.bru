@@ -1,0 +1,23 @@
+meta {
+  name: User by username
+  type: http
+  seq: 12
+}
+
+get {
+  url: {{bffUrl}}/auth/users/by-username/{{bobName}}
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{aliceAccess}}
+}
+
+tests {
+  test("status 200", () => expect(res.status).to.equal(200));
+  test("Bob", () => expect(res.body.user_id).to.equal(bru.getVar("bobId")));
+}
+
+docs {
+  Exact match, any case. 30 lookups per minute per player.
+}

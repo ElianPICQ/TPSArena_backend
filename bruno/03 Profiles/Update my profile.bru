@@ -1,0 +1,27 @@
+meta {
+  name: Update my profile
+  type: http
+  seq: 1
+}
+
+patch {
+  url: {{bffUrl}}/profiles/me
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{aliceAccess}}
+}
+
+body:json {
+  {
+    "bio": "Hello from Bruno",
+    "avatar": "scout"
+  }
+}
+
+tests {
+  test("status 200", () => expect(res.status).to.equal(200));
+  test("saved", () => expect(res.body.avatar).to.equal("scout"));
+}

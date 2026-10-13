@@ -1,0 +1,25 @@
+meta {
+  name: Delete Bob
+  type: http
+  seq: 9
+}
+
+post {
+  url: {{bffUrl}}/auth/me/delete
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{bobAccess}}
+}
+
+body:json {
+  {
+    "password": "{{newPassword}}"
+  }
+}
+
+tests {
+  test("status 204", () => expect(res.status).to.equal(204));
+}

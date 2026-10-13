@@ -1,0 +1,18 @@
+meta {
+  name: Leave a party
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{bffUrl}}/parties/{{partyId}}/leave
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{bobAccess}}
+}
+
+tests {
+  test("status 204", () => expect(res.status).to.equal(204));
+}
