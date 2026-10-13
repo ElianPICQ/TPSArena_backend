@@ -5,7 +5,7 @@ import httpx
 from fastapi import FastAPI
 
 from bff.config import get_settings
-from bff.routes import auth, servers, social, stats
+from bff.routes import auth, realtime, servers, social, stats
 
 
 @asynccontextmanager
@@ -17,11 +17,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         httpx.AsyncClient(base_url=settings.serverlist_url, timeout=timeout) as serverlist_client,
         httpx.AsyncClient(base_url=settings.social_url, timeout=timeout) as social_client,
         httpx.AsyncClient(base_url=settings.stats_url, timeout=timeout) as stats_client,
+        httpx.AsyncClient(base_url=settings.realtime_url, timeout=timeout) as realtime_client,
     ):
         app.state.auth_client = auth_client
         app.state.serverlist_client = serverlist_client
         app.state.social_client = social_client
         app.state.stats_client = stats_client
+        app.state.realtime_client = realtime_client
         yield
 
 
@@ -30,6 +32,7 @@ app.include_router(auth.router)
 app.include_router(servers.router)
 app.include_router(social.router)
 app.include_router(stats.router)
+app.include_router(realtime.router)
 
 
 @app.get("/health")

@@ -34,14 +34,14 @@ This summarizes design decisions made in a previous conversation. Use it as the 
 | **Server List API** | Registry of running game servers, public server list, server allocation for parties, join tickets. | Redis |
 | **Social API** | Profiles, friends, parties, invites, party launch. | PostgreSQL `social` schema + Redis (parties, invites) |
 | **Stats API** | Match results, leaderboards, progression (XP, levels, achievements). | PostgreSQL `stats` schema |
-| **Real-time service** | One WebSocket per online player: presence, friend messages, party chat, notifications pushed to clients. | Redis (presence, party chat) + PostgreSQL `chat` schema (friend messages) |
+| **Real-time service** | One WebSocket per online player: presence, friend messages, party chat, notifications pushed to clients. | Redis (presence, party chat, `realtime:*`) + PostgreSQL database `realtime`, schema `chat` (friend messages) |
 | **Godot dedicated servers** (GDScript) | Same Godot project exported for Linux, run `--headless`. One match per instance, server-authoritative (clients send inputs). ENet over UDP. Also relays in-match chat. | In memory |
 
 ### Infrastructure
 - **PostgreSQL**: **one database per service** (`auth`, `social`, `stats`, `chat`), each with its own user; in development each runs in the service's own Postgres container. Inside its database a service keeps its tables in a schema of the same name (created by its first migration). A service can move to another server by changing its `DATABASE_URL`.
 - **Redis**: one shared instance used for the server registry, join tickets, presence keys, parties/invites, party chat, and **Redis Streams as the message broker**. **AOF persistence must be on** (stream messages must survive a restart).
   - **Every key starts with its owning service** (`auth:`, `serverlist:`, `social:`, `stats:`, `realtime:`); only the stream names (`user.deleted`, `social.events`, …) are shared.
-  - **One ACL user per service** (`infra/redis/start.sh`), limited to its own prefix, read/write on the streams it consumes (consumer groups record acknowledgements) and write-only on the streams it only publishes; `-@dangerous` (no `FLUSHDB`, `KEYS`, `CONFIG`…). Each service's `REDIS_URL` carries its user and password.
+  - **One ACL user per service** (`infra/redis/start.sh`), limited to its own prefix, read/write on the streams it consumes (consumer groups record acknowledgements) and write-only on the streams it only publishes; Pub/Sub only on its own channels (`&realtime:*` for Real-time); `-@dangerous` (no `FLUSHDB`, `KEYS`, `CONFIG`, `INFO`…, so clients must not rely on `INFO`, e.g. ioredis' ready check is off). Each service's `REDIS_URL` carries its user and password.
   - The `default` user is the admin, behind a password, and **must keep full rights**: Redis replays the AOF at startup as the default user and silently drops any `MULTI`/`EXEC` (which includes Lua script results) it isn't allowed to run.
   - Services' Redis clients reconnect and retry on connection errors, so a Redis restart doesn't fail requests.
 - **Email sending** goes through plain **SMTP** configured by environment variables (`SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM`), so changing provider is a configuration change only:
@@ -64,20 +64,20 @@ This summarizes design decisions made in a previous conversation. Use it as the 
 | Social API | Python, **FastAPI** | SQLAlchemy async or asyncpg, Alembic, `redis-py` (Streams + Lua script for party joins), PyJWT |
 | Stats API | Python, **FastAPI** | SQLAlchemy async or asyncpg, Alembic, `redis-py` (Streams, sorted sets for leaderboard cache), PyJWT |
 | BFF | Python, **FastAPI** | `httpx` (async) to call the other services |
-| Real-time service | **TypeScript (Node.js)** | `ws`, `ioredis` (presence, party chat, Streams), `jose` (JWT/JWKS), a PostgreSQL client (`pg` or postgres.js) with a migration tool for the `chat` schema |
+| Real-time service | **TypeScript (Node.js 24+)** | `ws`, `ioredis` (presence, party chat, Streams, Pub/Sub), `jose` (JWT/JWKS), `pg` with a small SQL migration runner (`migrations/*.sql`), `ajv` (event validation against the contract); tests with vitest + testcontainers |
 | Godot client and dedicated server | **GDScript** | Godot high-level multiplayer, ENet, `HTTPRequest`, `WebSocketPeer` |
 
 Why this split: the stateless services are ordinary request/response work, where FastAPI is quick to write, validates with Pydantic and generates OpenAPI docs. The real-time service holds thousands of long-lived WebSockets, which Node handles efficiently; it is the only service with a reason to use a different language.
 
 Conventions:
-- **Event formats have one source of truth**: Pydantic models in a shared internal Python package → exported to JSON Schema → TypeScript types generated with `json-schema-to-typescript`. A format change then breaks the TypeScript build instead of silently breaking notifications.
+- **Event formats have one source of truth**: Pydantic models in `tpsarena_common.events` → `python -m tpsarena_common.export_schemas` writes `libs/common/schemas/events.json` (committed; a test fails if it's out of date) → released with the package tag → Real-time copies it from a tag (`npm run sync:events -- X.Y.Z` → `contracts/events.json`) → `json-schema-to-typescript` generates its types before each build and test, and Ajv validates events at runtime against the same file. A format change then breaks the TypeScript build instead of silently breaking notifications.
 - **Versioned shared package**: services depend on a **git tag** of `libs/common` (`common-vX.Y.Z`) from the private GitHub repo `ElianPICQ/TSArena_backend`, pinned to a commit by `uv.lock`. `scripts/release_common.py X.Y.Z` runs its tests, updates its version and CHANGELOG, tags and pushes; each service upgrades on its own (change the tag, `uv lock`). Images build from the service folder; the builder stage downloads the package through the developer's SSH agent (`ssh: [default]` in compose, `ssh-add` once per session) and the final image has no git or keys. `uv run --with-editable ../../libs/common pytest` tries an unreleased change.
 - **Shared internal Python package** (`libs/common`, `tpsarena_common`) for the Python services: JWT verification (JWKS fetched once, cached, fetched again on an unknown `kid`), the Redis Streams consumer base (consumer groups, `XACK`, `XAUTOCLAIM`, duplicate skipping, undecodable messages logged and acknowledged), event models.
 - **Stream entry format**: every entry has three fields: `event_id`, `type` (e.g. `party.updated`, picks the model) and `data` (the model's other fields as JSON).
 - **Stream consumers run as a separate process** from the API: same codebase, different entry point (e.g. `python -m stats.worker`), so the API and the consumer restart and scale independently.
 - **Async everywhere** in FastAPI: no blocking calls in async routes (use `httpx`, not `requests`; async DB drivers).
 - Run FastAPI with **uvicorn**, one process per CPU core in production.
-- JWT verification and the stream consumer loop also exist in TypeScript in the real-time service; keep both implementations behaving the same.
+- JWT verification and the stream consumer loop also exist in TypeScript in the real-time service (`src/jwt.ts`, `src/streams.ts`); keep both implementations behaving the same (same error codes, same `{prefix}:handled:{group}:{event_id}` markers, undecodable events acknowledged). The TypeScript consumer already survives a lost Redis connection (see TODO.md for the Python one).
 
 ### Authentication
 - Auth signs JWTs with an **asymmetric key** (RS256 or EdDSA) so other services can verify them with the public key only. The JWT contains the user ID in `sub` and is short-lived (around 15 minutes).
@@ -103,7 +103,7 @@ Conventions:
 
 | Kind | Transport | Storage | Lifetime |
 |---|---|---|---|
-| **Friend to friend** | Real-time service (WebSocket) | PostgreSQL `chat` schema | Persisted. Delivered when the friend comes online. Deleted on `user.deleted`. |
+| **Friend to friend** | Real-time service (WebSocket) | PostgreSQL `realtime` database, `chat` schema | Persisted, **kept 90 days** (hourly cleanup, one instance at a time). Friends only, 1–500 characters, 10 messages per 10 s per connection. Delivered live, or when the friend comes online. History: `GET /conversations/{friendId}/messages`. Deleted on `user.deleted`. |
 | **Party chat** | Real-time service (WebSocket) | Redis list `realtime:party_chat:{party_id}` (capped) | Deleted when the party is disbanded (`party.disbanded` event). |
 | **In-match chat** | Game server (Godot RPC over ENet) | Game server memory only | Gone when the match ends. Never stored. |
 
@@ -125,11 +125,16 @@ auth:ratelimit:{action}:{email_or_ip}   counter   INCR + EXPIRE window (e.g. 3 c
 idle → reserved (allocated to a party) → in_progress (visible in public list if slots free) → ending → idle
 
 # Presence (Real-time service)
-realtime:presence:{user_id}      { status, activity: menu | in_match }   (TTL 60 s, refreshed by client heartbeat)
+realtime:presence:last_seen           zset    user_id -> last heartbeat (ms); being in it = online (Lua: online/offline announced once)
+realtime:presence:{user_id}:conns     zset    connection id -> last heartbeat: connections per user (TTL 60 s)
+realtime:presence:{user_id}           hash    activity: menu | in_match   (TTL 60 s, refreshed by client heartbeat)
 
 # Party chat (Real-time service)
 realtime:party_chat:{party_id}           list    recent party messages, capped; deleted on party.disbanded
 realtime:party_chat:{party_id}:members   set     copy of party membership, maintained from party.updated events
+realtime:party_chat:{party_id}:version   string  version of the party.updated snapshot applied (older snapshots ignored)
+realtime:deliver                         Pub/Sub channel: pushes between Real-time instances
+realtime:cleanup:lock                    string  one instance per hour deletes old friend messages
 
 # Leaderboards (Stats API): cache of PostgreSQL totals, rebuilt from PostgreSQL if lost
 stats:leaderboard:{type}      zset    user_id scored by all-time total; type = xp | wins | kills (written with ZADD GT: totals only grow)
@@ -147,7 +152,7 @@ social:invite:{invite_id}          hash    party_id, from, to   (TTL 60 s)
 | Stream | Published by | Consumed by | Purpose |
 |---|---|---|---|
 | `match.finished` | Game server | Stats, Social | Save match, update leaderboards, award XP (Stats); party back to `lobby` (Social, using the event's `party_id`) |
-| `player.match` (joined / left) | Game server | Real-time | Presence "in match" / "in menu" |
+| `player.match` (`user_id`, `server_id`, `action`: joined / left) | Game server | Real-time | Presence "in match" / "in menu" |
 | `auth.emails` | Auth API | Auth worker | Send verification and password-reset emails (internal to Auth) |
 | `user.deleted` | Auth | Social, Stats, Real-time | Delete or anonymize the player's data (Stats deletes totals and achievements and sets `user_id` to null in stored match results; Real-time deletes friend messages and closes sockets) |
 | `social.events` | Social | Real-time | Friend requests, `party.invite_sent`, `party.updated`, `party.match_ready` (server address + per-member ticket), `party.disbanded` (delete party chat) |
@@ -187,7 +192,9 @@ Rules:
 
 **Progression**: XP per match = 100 for playing + 10 per kill + 200 for 1st place. Everyone starts at level 1; going from level L to L+1 takes 1000 + 250 × (L − 1) XP. Achievements are defined in code (first match, first win, 10 wins, 100 kills, 1000 kills, 10 kills in one match, win without dying), each unlocked once. Leaderboards are all-time only (`xp`, `wins`, `kills`); players with the same total share a rank ("1224" ranking).
 
-**Presence**: online = WebSocket open + heartbeat; offline after a grace period; "in match" comes from game server `player.match` events. Pull via `GET /presence?ids=`, push to online friends on change. Count connections per user; only friends can see status.
+**Presence and the WebSocket** (protocol for the client: `services/realtime/PROTOCOL.md`): the client connects to Real-time directly (`ws://…:8005/ws`) and sends `{"type": "auth", "token"}` within 5 s (not a handshake header, so a future browser client works too), then again after each token refresh; a socket whose token expires without a new one is closed (4001). Real-time loads the player's friends from Social with that token. Online = at least one socket with a heartbeat (every 20 s; a connection is gone after 60 s without one). When the last socket closes, the player goes offline after a **30 s grace period** (a quick reconnect doesn't count), then `presence.changed` offline makes Social remove them from their party. A sweeper finds players of a crashed instance. "In match" comes from game server `player.match` events. Pull via `GET /presence?ids=` (answers only for friends), push to online friends on change. Count connections per user; only friends can see status.
+
+**Real-time with several instances**: one consumer group `realtime`, so each stream event is handled by one instance; it publishes the pushes on the Pub/Sub channel `realtime:deliver` and every instance delivers them to its own sockets. `party.match_ready` gives each member only their own ticket; `party.updated` also reaches members who were just removed.
 
 **Account deletion**: client → BFF → Auth `POST /me/delete` with the password (POST rather than `DELETE /me` because the password goes in a body) → user deleted, `user.deleted` published; each service cleans its own data.
 

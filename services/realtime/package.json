@@ -1,0 +1,38 @@
+{
+  "name": "realtime",
+  "version": "0.1.0",
+  "description": "TPSArena Real-time service: one WebSocket per online player (presence, friend messages, party chat, notifications)",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "sync:events": "node scripts/sync-events.mjs",
+    "gen:events": "node scripts/gen-events.mjs",
+    "build": "npm run gen:events && tsc -p tsconfig.json",
+    "migrate": "node dist/migrate.js",
+    "start": "node dist/index.js",
+    "test": "npm run gen:events && vitest run",
+    "typecheck": "npm run gen:events && tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "ajv": "^8.20.0",
+    "ajv-formats": "^3.0.1",
+    "ioredis": "^6.0.0",
+    "jose": "^6.2.12",
+    "pg": "^8.23.1",
+    "ws": "^8.22.0"
+  },
+  "devDependencies": {
+    "@testcontainers/postgresql": "^12.2.1",
+    "@testcontainers/redis": "^12.2.1",
+    "@types/node": "^26.6.5",
+    "@types/pg": "^8.23.1",
+    "@types/ws": "^8.18.2",
+    "json-schema-to-typescript": "^16.0.0",
+    "testcontainers": "^12.2.1",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.4"
+  }
+}

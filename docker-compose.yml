@@ -12,5 +12,7 @@ include:
     env_file: .env
   - path: [services/stats/compose.yaml, infra/fullstack/stats.yaml]
     env_file: .env
+  - path: [services/realtime/compose.yaml, infra/fullstack/realtime.yaml]
+    env_file: .env
   - path: services/bff/compose.yaml
     env_file: .env

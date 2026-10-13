@@ -1,0 +1,6 @@
+# Full stack only: realtime also waits for the shared Redis (infra/compose.yaml).
+services:
+  realtime:
+    depends_on:
+      redis:
+        condition: service_healthy

@@ -9,6 +9,7 @@ services:
       SERVERLIST_REDIS_PASSWORD: ${SERVERLIST_REDIS_PASSWORD}
       SOCIAL_REDIS_PASSWORD: ${SOCIAL_REDIS_PASSWORD}
       STATS_REDIS_PASSWORD: ${STATS_REDIS_PASSWORD}
+      REALTIME_REDIS_PASSWORD: ${REALTIME_REDIS_PASSWORD}
     volumes:
       - ./redis/start.sh:/start.sh:ro
       - redis-data:/data

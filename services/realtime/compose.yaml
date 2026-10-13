@@ -1,0 +1,48 @@
+# Real-time alone:  docker compose --profile standalone up --build   (own Postgres and Redis)
+# In the full stack this file is included by the root docker-compose.yml (shared Redis, root .env).
+services:
+  realtime:
+    build: .
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgres://realtime_svc:${REALTIME_DB_PASSWORD:-realtime_dev_password}@realtime-db:5432/realtime
+      REDIS_URL: ${REALTIME_REDIS_URL:-redis://realtime-redis:6379/0}
+      AUTH_JWKS_URL: ${AUTH_JWKS_URL:-http://host.docker.internal:8001/.well-known/jwks.json}
+      SOCIAL_URL: ${SOCIAL_URL:-http://host.docker.internal:8003}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"  # reach services running on the host when alone
+    ports:
+      - "8005:8005"  # game clients connect here directly (WebSocket at /ws)
+    depends_on:
+      realtime-db:
+        condition: service_healthy
+      realtime-redis:
+        condition: service_healthy
+        required: false
+
+  realtime-db:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: realtime_svc
+      POSTGRES_PASSWORD: ${REALTIME_DB_PASSWORD:-realtime_dev_password}
+      POSTGRES_DB: realtime
+    volumes:
+      - realtime-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U realtime_svc -d realtime"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  realtime-redis:
+    profiles: [standalone]
+    image: redis:7
+    command: ["redis-server", "--appendonly", "yes"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  realtime-db-data:

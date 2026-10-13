@@ -9,6 +9,7 @@ services:
       SERVERLIST_URL: ${SERVERLIST_URL:-http://host.docker.internal:8002}
       SOCIAL_URL: ${SOCIAL_URL:-http://host.docker.internal:8003}
       STATS_URL: ${STATS_URL:-http://host.docker.internal:8004}
+      REALTIME_URL: ${REALTIME_URL:-http://host.docker.internal:8005}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:

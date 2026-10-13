@@ -52,6 +52,14 @@ Fix: in `StreamConsumer.run`, catch connection errors, wait with backoff and res
 the same `Retry` settings in `consumer_redis`); release a new `tpsarena-common` version and
 upgrade the services.
 
+## Close WebSockets on logout and password reset
+Logout and password reset revoke refresh tokens, but an open WebSocket stays connected until its
+access token expires (up to 15 minutes), because Real-time only checks tokens at `auth` and on
+expiry.
+Fix: Auth publishes an event when sessions are revoked (e.g. `auth.sessions_revoked` with the user
+id, on logout-all and password reset), and Real-time closes that player's sockets (4001) like it
+does for `user.deleted`. Plain logout of one device can keep the current behaviour.
+
 ## Before the public release
 - Move email sending from the Gmail account to an own domain + transactional provider
   (see `project-context.md`).

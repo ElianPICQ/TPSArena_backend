@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     serverlist_url: str = "http://localhost:8002"
     social_url: str = "http://localhost:8003"
     stats_url: str = "http://localhost:8004"
+    realtime_url: str = "http://localhost:8005"
     upstream_timeout_seconds: float = 5.0
 
 
