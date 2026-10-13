@@ -12,6 +12,7 @@ services:
       AUTH_JWKS_URL: ${AUTH_JWKS_URL:-http://host.docker.internal:8001/.well-known/jwks.json}
       AUTH_URL: ${AUTH_URL:-http://host.docker.internal:8001}
       SERVERLIST_URL: ${SERVERLIST_URL:-http://host.docker.internal:8002}
+      ENVIRONMENT: ${ENVIRONMENT:-development}  # development compose file: dev secrets allowed
       SOCIAL_SERVICE_SECRET: ${SOCIAL_SERVICE_SECRET:-change-me-dev-social-service-secret}
     extra_hosts: &hosts
       - "host.docker.internal:host-gateway"  # reach services running on the host when alone

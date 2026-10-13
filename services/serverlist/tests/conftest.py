@@ -15,6 +15,7 @@ atexit.register(redis_container.stop)
 os.environ["REDIS_URL"] = (
     f"redis://{redis_container.get_container_host_ip()}:{redis_container.get_exposed_port(6379)}/0"
 )
+os.environ["ENVIRONMENT"] = "development"  # the dev secret defaults are fine here
 os.environ["GAME_SERVER_SECRET"] = "test-game-server-secret"
 os.environ["SOCIAL_SERVICE_SECRET"] = "test-social-secret"
 

@@ -11,6 +11,7 @@ services:
       DATABASE_URL: postgresql+asyncpg://auth_svc:${AUTH_DB_PASSWORD:-auth_dev_password}@auth-db:5432/auth
       REDIS_URL: ${AUTH_REDIS_URL:-redis://auth-redis:6379/0}
       JWT_PRIVATE_KEY_PATH: /keys/jwt_private.pem
+      ENVIRONMENT: ${ENVIRONMENT:-development}  # development compose file: dev secrets allowed
       CODE_SECRET: ${CODE_SECRET:-change-me-dev-code-secret}
       SMTP_HOST: ${SMTP_HOST:-mailpit}
       SMTP_PORT: ${SMTP_PORT:-1025}

@@ -35,6 +35,7 @@ os.environ["DATABASE_URL"] = postgres.get_connection_url()
 os.environ["REDIS_URL"] = (
     f"redis://{redis_container.get_container_host_ip()}:{redis_container.get_exposed_port(6379)}/0"
 )
+os.environ["ENVIRONMENT"] = "development"  # the dev secret defaults are fine here
 os.environ["JWT_PRIVATE_KEY_PATH"] = str(key_file)
 
 subprocess.run([sys.executable, "-m", "alembic", "upgrade", "head"], cwd=SERVICE_DIR, check=True, env=os.environ)

@@ -1,5 +1,6 @@
-"""Auth worker: consumes the auth.emails stream and sends the emails over SMTP, and publishes
-events left in the outbox (Redis was down when the request tried).
+"""Auth worker: consumes the auth.emails stream and sends the emails over SMTP, publishes
+events left in the outbox (Redis was down when the request tried), and runs the hourly cleanup
+(auth.cleanup: unverified accounts, old refresh tokens and email codes).
 
 Run with `python -m auth.worker`.
 """
@@ -12,6 +13,7 @@ import aiosmtplib
 from tpsarena_common.events import CodeEmail, Event
 from tpsarena_common.streams import StreamConsumer, consumer_redis
 
+from auth import cleanup
 from auth.config import get_settings
 from auth.events import outbox
 
@@ -54,7 +56,7 @@ async def handle(event: Event) -> None:
 async def run() -> None:
     settings = get_settings()
     consumer = StreamConsumer(consumer_redis(settings.redis_url), "auth", "auth-worker", [settings.emails_stream], handle)
-    await asyncio.gather(consumer.run(), outbox.run())
+    await asyncio.gather(consumer.run(), outbox.run(), cleanup.run())
 
 
 def main() -> None:

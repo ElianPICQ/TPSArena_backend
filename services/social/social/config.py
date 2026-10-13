@@ -1,6 +1,16 @@
 from functools import lru_cache
+from typing import Self
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+SECRETS = ("social_service_secret",)
+MIN_SECRET_LENGTH = 32
+
+
+def is_weak(secret: str) -> bool:
+    return secret.startswith("change-me") or len(secret) < MIN_SECRET_LENGTH
 
 
 class Settings(BaseSettings):
@@ -23,6 +33,21 @@ class Settings(BaseSettings):
     invite_ttl_seconds: int = 60
 
     events_stream_maxlen: int = 100_000
+
+    # "development" accepts the change-me-dev-* defaults above. Anything else (the default, so a
+    # deployment that forgets to set it is covered) refuses to start with a weak secret.
+    environment: str = "production"
+
+    @model_validator(mode="after")
+    def no_development_secrets(self) -> Self:
+        if self.environment != "development":
+            weak = [name.upper() for name in SECRETS if is_weak(getattr(self, name))]
+            if weak:
+                raise ValueError(
+                    f"{', '.join(weak)}: set a real secret of at least {MIN_SECRET_LENGTH} characters "
+                    "(the change-me-dev-* defaults are only for ENVIRONMENT=development)"
+                )
+        return self
 
 
 @lru_cache

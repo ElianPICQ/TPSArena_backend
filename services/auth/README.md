@@ -1,6 +1,6 @@
 # Auth / Users API
 
-Registration, email verification, login, tokens (JWT + refresh), password reset, account deletion, name lookup, JWKS. A worker (`python -m auth.worker`) sends the code emails and publishes events left in the outbox.
+Registration, email verification, login, tokens (JWT + refresh), password reset, account deletion, name lookup, JWKS. A worker (`python -m auth.worker`) sends the code emails, publishes events left in the outbox, and runs the hourly cleanup (unverified accounts after 7 days, old refresh tokens and email codes).
 
 Port 8001. Owns: PostgreSQL database `auth`, Redis keys `auth:*`, Mailpit (dev).
 

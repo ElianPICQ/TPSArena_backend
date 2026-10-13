@@ -1,7 +1,17 @@
 from functools import lru_cache
+from typing import Self
 from pathlib import Path
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+SECRETS = ("code_secret",)
+MIN_SECRET_LENGTH = 32
+
+
+def is_weak(secret: str) -> bool:
+    return secret.startswith("change-me") or len(secret) < MIN_SECRET_LENGTH
 
 
 class Settings(BaseSettings):
@@ -25,6 +35,9 @@ class Settings(BaseSettings):
     resend_ip_rate_limit: int = 10  # code emails per 15 minutes, per IP
     delete_account_rate_limit: int = 5  # password attempts per 15 minutes, per user
     users_lookup_max_ids: int = 100
+
+    unverified_account_ttl_days: int = 7
+    cleanup_interval_seconds: int = 3600
     username_lookup_rate_limit: int = 30  # per minute, per user
 
     emails_stream: str = "auth.emails"
@@ -39,6 +52,21 @@ class Settings(BaseSettings):
     smtp_password: str = ""
     smtp_from: str = "no-reply@tpsarena.local"
     smtp_starttls: bool = False
+
+    # "development" accepts the change-me-dev-* defaults above. Anything else (the default, so a
+    # deployment that forgets to set it is covered) refuses to start with a weak secret.
+    environment: str = "production"
+
+    @model_validator(mode="after")
+    def no_development_secrets(self) -> Self:
+        if self.environment != "development":
+            weak = [name.upper() for name in SECRETS if is_weak(getattr(self, name))]
+            if weak:
+                raise ValueError(
+                    f"{', '.join(weak)}: set a real secret of at least {MIN_SECRET_LENGTH} characters "
+                    "(the change-me-dev-* defaults are only for ENVIRONMENT=development)"
+                )
+        return self
 
 
 @lru_cache
