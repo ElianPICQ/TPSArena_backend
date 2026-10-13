@@ -12,21 +12,6 @@ To do when the game server is written (GDScript):
   `Authorization: Bearer <server_token>`. On `404 server_not_found` from a heartbeat, register
   again and use the new id and token.
 
-## Party events can still be lost
-Social's party events (`party.updated`, `party.match_ready`, ...) are published right after the
-Lua script that changes the party. The party lives in Redis too, so it isn't the outbox case, but
-a lost connection between the script and the `XADD` still loses the event: Real-time's party chat
-membership and the members' screens stay out of date until the next party change.
-Fix if it shows up: add the event from inside the Lua scripts, like the Server List does
-(the script builds the `data` JSON; a test decodes it with the shared models).
-
-## Server List down for more than 30 s
-The sweeper reads a crashed server's `party_id` from its registry hash, which expires 30 s after
-the last heartbeat. If no Server List instance runs a sweep in that time, `server.removed` comes
-without `party_id` and the party stays `in_match` (members can leave and make a new party).
-Fix if it matters: keep `server_id -> party_id` in a separate key without the short TTL, or have
-the Social worker check its `in_match` parties against the Server List periodically.
-
 ## Before the public release
 - Move email sending from the Gmail account to an own domain + transactional provider
   (see `project-context.md`).

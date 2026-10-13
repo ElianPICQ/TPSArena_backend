@@ -2,6 +2,8 @@ import uuid
 
 import httpx
 
+from social import clients, parties
+
 from .conftest import Player, events, new_player
 from .test_friends import befriend
 
@@ -200,3 +202,39 @@ async def test_launch_with_serverlist_down(client, mocked):
     r = await client.post(f"/parties/{party_id}/launch", json={"build_version": "0.1.0"}, headers=leader.headers)
     assert (r.status_code, r.json()["error"]) == (503, "serverlist_unavailable")
     assert (await party(client, party_id, leader)).json()["status"] == "lobby"
+
+
+async def test_every_change_publishes_a_snapshot_equal_to_the_party(client):
+    leader, friend = new_player(), new_player()
+    await befriend(client, leader, friend)
+    party_id = await create_party(client, leader)
+    await invite_and_join(client, party_id, leader, friend)
+    await client.post(f"/parties/{party_id}/leave", headers=leader.headers)
+
+    updates = await events("party.updated")
+    assert [u.version for u in updates] == [1, 2, 3]  # created, joined, leader left
+    stored = (await party(client, party_id, friend)).json()
+    last = updates[-1]
+    assert (str(last.leader_id), last.status, [str(m) for m in last.member_ids], last.version) == (
+        stored["leader_id"],
+        stored["status"],
+        stored["member_ids"],
+        stored["version"],
+    )
+    assert stored["leader_id"] == str(friend.user_id)
+
+
+async def test_party_gone_during_allocation_gets_no_match_ready(client, monkeypatch):
+    leader = new_player()
+    party_id = await create_party(client, leader)
+
+    async def allocate_while_leader_leaves(*_):
+        await parties.remove_member(party_id, leader.user_id)
+        return allocation_for([leader])
+
+    monkeypatch.setattr(clients, "allocate_server", allocate_while_leader_leaves)
+    r = await client.post(f"/parties/{party_id}/launch", json={"build_version": "0.1.0"}, headers=leader.headers)
+    assert r.status_code == 409
+    assert r.json()["error"] == "party_changed"
+    assert await events("party.match_ready") == []
+    assert [e.party_id for e in await events("party.disbanded")] == [party_id]

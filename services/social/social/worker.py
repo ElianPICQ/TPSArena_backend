@@ -53,9 +53,7 @@ async def handle(event: Event) -> None:
             | ReservationExpired(party_id=party_id, server_id=server_id)
         ):
             # Only if the party is still on that server: it may have launched again since.
-            result = await parties.set_status(party_id, "in_match", "lobby", required_server_id=str(server_id))
-            if result == "ok":
-                await parties.publish_party(party_id)
+            await parties.set_status(party_id, "in_match", "lobby", required_server_id=str(server_id))
 
 
 async def run() -> None:

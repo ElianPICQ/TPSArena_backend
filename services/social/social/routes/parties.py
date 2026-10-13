@@ -1,14 +1,12 @@
 import uuid
-from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Response, status
-from tpsarena_common.events import PartyInviteSent, PartyMatchReady
+from tpsarena_common.events import PartyMatchReady
 
 from social import clients, parties
 from social.config import get_settings
 from social.deps import CurrentUserId, Session
 from social.errors import APIError
-from social.redis_client import publish_event
 from social.routes.friends import are_friends
 from social.schemas import (
     ErrorResponse,
@@ -71,7 +69,7 @@ async def create_party(user_id: CurrentUserId) -> PartyResponse:
     except ValueError as exc:
         raise_for(str(exc))
         raise
-    return party_response(await parties.publish_party(party_id))
+    return party_response(await parties.get_party(party_id))
 
 
 @router.get("/parties/{party_id}", responses=ERRORS)
@@ -96,13 +94,7 @@ async def invite(party_id: str, body: UserIdRequest, user_id: CurrentUserId, ses
     if not await are_friends(session, user_id, target):
         raise APIError(403, "not_friends", "You can only invite your friends.")
 
-    invite_id = await parties.create_invite(party_id, user_id, target, settings.invite_ttl_seconds)
-    expires_at = datetime.now(UTC) + timedelta(seconds=settings.invite_ttl_seconds)
-    await publish_event(
-        PartyInviteSent(
-            invite_id=invite_id, party_id=party_id, from_user_id=user_id, to_user_id=target, expires_at=expires_at
-        )
-    )
+    invite_id, expires_at = await parties.create_invite(party_id, user_id, target, settings.invite_ttl_seconds)
     return InviteResponse(invite_id=invite_id, expires_at=expires_at)
 
 
@@ -122,7 +114,7 @@ async def accept_invite(invite_id: str, user_id: CurrentUserId) -> PartyResponse
 
     result = await parties.join(invite_id, party_id, user_id, get_settings().max_party_size)
     raise_for(result)
-    return party_response(await parties.publish_party(party_id))
+    return party_response(await parties.get_party(party_id))
 
 
 @router.post("/parties/{party_id}/leave", status_code=status.HTTP_204_NO_CONTENT, responses=ERRORS)
@@ -149,26 +141,27 @@ async def launch(party_id: str, body: LaunchRequest, user_id: CurrentUserId) -> 
     """Leader only: reserve a fresh game server for the whole party (always a new match)."""
     party = await party_of_member(party_id, user_id)
     raise_for(await parties.set_status(party_id, "lobby", "launching", required_leader=user_id))
-    await parties.publish_party(party_id)
 
     try:
         allocation = await clients.allocate_server(party_id, party.member_ids, body.build_version, body.region)
     except APIError:
         await parties.set_status(party_id, "launching", "lobby")
-        await parties.publish_party(party_id)
         raise
 
-    await parties.set_status(party_id, "launching", "in_match", server_id=allocation["server_id"])
-    await parties.publish_party(party_id)
-    await publish_event(
-        PartyMatchReady(
-            party_id=party_id,
-            server_id=allocation["server_id"],
-            address=allocation["address"],
-            port=allocation["port"],
-            tickets=allocation["tickets"],
-        )
+    match_ready = PartyMatchReady(
+        party_id=party_id,
+        server_id=allocation["server_id"],
+        address=allocation["address"],
+        port=allocation["port"],
+        tickets=allocation["tickets"],
     )
+    result = await parties.set_status(
+        party_id, "launching", "in_match", server_id=allocation["server_id"], then=match_ready
+    )
+    if result != "ok":
+        # The party changed during the allocation (e.g. everyone left): the reserved server
+        # goes back to idle once its reservation runs out.
+        raise APIError(409, "party_changed", "The party changed while the match was being prepared.")
     return LaunchResponse(
         server_id=allocation["server_id"],
         address=allocation["address"],

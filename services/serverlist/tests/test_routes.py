@@ -4,7 +4,7 @@ import httpx
 from tpsarena_common.events import Event, ReservationExpired, ServerRemoved, decode
 
 from serverlist.config import get_settings
-from serverlist.redis_client import ACTIVE_SERVERS, EVENTS_STREAM, redis, server_key, server_tickets_key
+from serverlist.redis_client import ACTIVE_SERVERS, EVENTS_STREAM, redis, server_key, server_party_key, server_tickets_key
 from serverlist.routes import sweep
 
 from .conftest import GAME_SERVER, SOCIAL, player
@@ -177,6 +177,29 @@ async def test_sweeper_removes_crashed_servers_and_names_their_party(client):
     assert (await heartbeat(client, crashed, "idle")).status_code == 404  # must register again
     assert await sweep() == 0  # once only
     assert await redis.zrange(ACTIVE_SERVERS, 0, -1) == [alive]
+
+
+async def test_late_sweep_still_names_the_party(client):
+    """Server List was down longer than the registry TTL: the hash is gone, the party key isn't."""
+    server_id = await register(client)
+    party_id = str(uuid.uuid4())
+    await allocate(client, [uuid.uuid4()], party_id=party_id)
+    await redis.zadd(ACTIVE_SERVERS, {server_id: 0})
+    await redis.delete(server_key(server_id))  # what the 15 s TTL does
+
+    assert await sweep() == 1
+    [event] = await server_events()
+    assert (str(event.server_id), event.party_id) == (server_id, party_id)
+    assert await redis.exists(server_party_key(server_id)) == 0
+
+
+async def test_party_key_goes_when_the_server_is_idle_again(client, monkeypatch):
+    monkeypatch.setattr(get_settings(), "reservation_seconds", 0)
+    server_id = await register(client)
+    await allocate(client, [uuid.uuid4()])
+    assert await redis.exists(server_party_key(server_id)) == 1
+    await heartbeat(client, server_id, "idle")
+    assert await redis.exists(server_party_key(server_id)) == 0
 
 
 async def test_sweeper_spares_a_server_that_just_sent_a_heartbeat(client):

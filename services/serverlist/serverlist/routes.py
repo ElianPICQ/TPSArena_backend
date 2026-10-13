@@ -10,7 +10,15 @@ from serverlist import scripts
 from serverlist.config import get_settings
 from serverlist.deps import Credentials, CurrentUserId, GameServer, SocialService, check_server_token, hash_server_token
 from serverlist.errors import APIError
-from serverlist.redis_client import ACTIVE_SERVERS, EVENTS_STREAM, redis, server_key, server_tickets_key, ticket_key
+from serverlist.redis_client import (
+    ACTIVE_SERVERS,
+    EVENTS_STREAM,
+    redis,
+    server_key,
+    server_party_key,
+    server_tickets_key,
+    ticket_key,
+)
 from serverlist.schemas import (
     AllocationRequest,
     AllocationResponse,
@@ -40,11 +48,6 @@ def new_ticket_id() -> str:
     return secrets.token_urlsafe(24)
 
 
-def server_hash_ttl() -> int:
-    # Outlives the heartbeat timeout, so the sweeper still finds the party of a crashed server.
-    return get_settings().server_ttl_seconds * 2
-
-
 async def sweep() -> int:
     """Remove servers that missed their heartbeats (crashed) and publish server.removed for each."""
     settings = get_settings()
@@ -52,7 +55,7 @@ async def sweep() -> int:
     removed = 0
     for sid in await redis.zrangebyscore(ACTIVE_SERVERS, "-inf", stale_before):
         removed += await scripts.REMOVE(
-            keys=[server_key(sid), server_tickets_key(sid), ACTIVE_SERVERS, EVENTS_STREAM],
+            keys=[server_key(sid), server_tickets_key(sid), ACTIVE_SERVERS, EVENTS_STREAM, server_party_key(sid)],
             args=[sid, "timed_out", stale_before, str(uuid.uuid4()), settings.events_stream_maxlen],
         )
     return removed
@@ -105,7 +108,7 @@ async def register_server(body: RegisterServerRequest) -> RegisterServerResponse
                 "token_hash": hash_server_token(server_token),
             },
         )
-        pipe.expire(key, server_hash_ttl())
+        pipe.expire(key, get_settings().server_ttl_seconds)
         pipe.zadd(ACTIVE_SERVERS, {server_id: now_ms()})
         await pipe.execute()
     return RegisterServerResponse(
@@ -124,10 +127,10 @@ async def heartbeat(server_id: uuid.UUID, body: HeartbeatRequest, credentials: C
     await require_server(sid, credentials)
     settings = get_settings()
     result = await scripts.HEARTBEAT(
-        keys=[server_key(sid), server_tickets_key(sid), ACTIVE_SERVERS, EVENTS_STREAM],
+        keys=[server_key(sid), server_tickets_key(sid), ACTIVE_SERVERS, EVENTS_STREAM, server_party_key(sid)],
         args=[
             now_ms(),
-            server_hash_ttl(),
+            get_settings().server_ttl_seconds,
             body.status,
             body.players,
             body.map,
@@ -153,7 +156,7 @@ async def deregister_server(server_id: uuid.UUID, credentials: Credentials) -> R
     sid = str(server_id)
     if await check_server_token(sid, credentials):
         await scripts.REMOVE(
-            keys=[server_key(sid), server_tickets_key(sid), ACTIVE_SERVERS, EVENTS_STREAM],
+            keys=[server_key(sid), server_tickets_key(sid), ACTIVE_SERVERS, EVENTS_STREAM, server_party_key(sid)],
             args=[sid, "deregistered", "", str(uuid.uuid4()), get_settings().events_stream_maxlen],
         )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -266,7 +269,12 @@ async def allocate_server(body: AllocationRequest) -> AllocationResponse:
             args += [ticket, json.dumps({"user_id": str(user_id), "server_id": sid})]
         # Another allocation may take the same server first: then try the next one.
         reserved = await scripts.ALLOCATE(
-            keys=[server_key(sid), server_tickets_key(sid), *(ticket_key(t) for t in tickets.values())],
+            keys=[
+                server_key(sid),
+                server_tickets_key(sid),
+                *(ticket_key(t) for t in tickets.values()),
+                server_party_key(sid),
+            ],
             args=args,
         )
         if reserved:

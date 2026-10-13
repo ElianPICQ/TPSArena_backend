@@ -24,6 +24,12 @@ def server_tickets_key(server_id: str) -> str:
     return f"serverlist:server:{server_id}:tickets"
 
 
+def server_party_key(server_id: str) -> str:
+    """The party a server hosts. Unlike the server hash (15 s TTL), it lasts until the server is
+    removed (1 day at most), so server.removed names the party even if the sweep comes late."""
+    return f"serverlist:server:{server_id}:party"
+
+
 def ticket_key(ticket_id: str) -> str:
     return f"serverlist:ticket:{ticket_id}"
 
