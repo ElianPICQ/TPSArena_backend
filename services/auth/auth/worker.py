@@ -19,14 +19,20 @@ from auth.events import outbox
 
 log = logging.getLogger("auth.worker")
 
+# The players' language is French (the game's UI is in French).
 SUBJECTS = {
-    "verify": "Your TPSArena verification code",
-    "reset": "Your TPSArena password reset code",
+    "verify": "Ton code de vérification Arena TPS",
+    "reset": "Ton code pour changer de mot de passe Arena TPS",
 }
 BODIES = {
-    "verify": "Hi {username},\n\nYour verification code is {code}.\nIt expires in {ttl} minutes.\n",
-    "reset": "Hi {username},\n\nYour password reset code is {code}.\nIt expires in {ttl} minutes.\n"
-    "If you didn't ask for it, you can ignore this email.\n",
+    "verify": "Bonjour {username},\n\n"
+    "Ton code de vérification est : {code}\n"
+    "Saisis-le dans le jeu pour activer ton compte. Il expire dans {ttl} minutes.\n\n"
+    "Si tu n'as pas créé de compte Arena TPS, tu peux ignorer cet e-mail.\n",
+    "reset": "Bonjour {username},\n\n"
+    "Ton code pour choisir un nouveau mot de passe est : {code}\n"
+    "Il expire dans {ttl} minutes.\n\n"
+    "Si tu n'as rien demandé, ignore cet e-mail : ton mot de passe ne change pas.\n",
 }
 
 
