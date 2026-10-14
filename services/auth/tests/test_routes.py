@@ -498,26 +498,50 @@ async def test_events_wait_in_the_outbox_while_redis_is_down(client: httpx.Async
     await down.aclose()
 
 
-async def test_get_user_by_username(client: httpx.AsyncClient):
-    account, tokens = await verified_account(client)
+async def test_search_users_by_username(client: httpx.AsyncClient):
+    _, tokens = await verified_account(client)
     headers = bearer(tokens["access_token"])
-    r = await client.get(f"/users/by-username/{account['username'].upper()}", headers=headers)
+    tag = uuid.uuid4().hex[:8]
+    names = [f"z{tag}", f"{tag}_long", f"{tag}x", tag.upper(), f"{tag}9z"]  # registered in this order
+    for name in names:
+        account = new_account() | {"username": name}
+        assert (await client.post("/register", json=account)).status_code == 201
+
+    r = await client.get("/users/search", params={"username": tag}, headers=headers)
     assert r.status_code == 200
-    assert r.json() == {"user_id": user_id_of(tokens), "username": account["username"]}
+    # Exact match first (any case), then the ones starting with the text (shortest first), then the rest.
+    assert [u["username"] for u in r.json()["users"]] == [tag.upper(), f"{tag}x", f"{tag}9z", f"{tag}_long", f"z{tag}"]
+    assert all(set(u) == {"user_id", "username"} for u in r.json()["users"])
 
-    r = await client.get("/users/by-username/nobody_here", headers=headers)
-    assert r.status_code == 404
-    assert r.json()["error"] == "user_not_found"
+    # "_" and "%" are plain characters, not LIKE wildcards.
+    r = await client.get("/users/search", params={"username": f"{tag}_"}, headers=headers)
+    assert [u["username"] for u in r.json()["users"]] == [f"{tag}_long"]
+    r = await client.get("/users/search", params={"username": f"{tag}%"}, headers=headers)
+    assert r.json() == {"users": []}
 
-    assert (await client.get(f"/users/by-username/{account['username']}")).status_code == 401
+    assert (await client.get("/users/search", params={"username": ""}, headers=headers)).status_code == 422
+    assert (await client.get("/users/search", params={"username": tag})).status_code == 401
 
 
-async def test_get_user_by_username_rate_limited(client: httpx.AsyncClient):
+async def test_search_users_caps_the_results(client: httpx.AsyncClient, monkeypatch):
+    _, tokens = await verified_account(client)
+    tag = uuid.uuid4().hex[:8]
+    for i in range(3):
+        assert (await client.post("/register", json=new_account() | {"username": f"{tag}{i}"})).status_code == 201
+    monkeypatch.setattr(get_settings(), "username_search_max_results", 2)
+    r = await client.get("/users/search", params={"username": tag}, headers=bearer(tokens["access_token"]))
+    assert [u["username"] for u in r.json()["users"]] == [f"{tag}0", f"{tag}1"]
+
+
+async def test_search_users_rate_limited(client: httpx.AsyncClient):
     _, tokens = await verified_account(client)
     headers = bearer(tokens["access_token"])
     limit = get_settings().username_lookup_rate_limit
-    statuses = [(await client.get("/users/by-username/someone", headers=headers)).status_code for _ in range(limit + 1)]
-    assert statuses[:limit] == [404] * limit
+    statuses = [
+        (await client.get("/users/search", params={"username": "someone"}, headers=headers)).status_code
+        for _ in range(limit + 1)
+    ]
+    assert statuses[:limit] == [200] * limit
     assert statuses[limit] == 429
 
 

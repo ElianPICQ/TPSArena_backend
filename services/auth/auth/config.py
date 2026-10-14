@@ -39,6 +39,7 @@ class Settings(BaseSettings):
     unverified_account_ttl_days: int = 7
     cleanup_interval_seconds: int = 3600
     username_lookup_rate_limit: int = 30  # per minute, per user
+    username_search_max_results: int = 20
 
     emails_stream: str = "auth.emails"
     emails_stream_maxlen: int = 10_000

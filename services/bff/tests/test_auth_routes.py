@@ -107,16 +107,18 @@ async def test_get_users_forwards_query_and_token(client: httpx.AsyncClient):
 
 
 @respx.mock
-async def test_get_user_by_username_forwards_token_and_errors(client: httpx.AsyncClient):
-    alice = {"user_id": "u1", "username": "Alice"}
-    route = respx.get(f"{AUTH}/users/by-username/alice").mock(return_value=httpx.Response(200, json=alice))
-    r = await client.get("/auth/users/by-username/alice", headers={"authorization": "Bearer abc"})
+async def test_search_users_forwards_query_token_and_errors(client: httpx.AsyncClient):
+    users = {"users": [{"user_id": "u1", "username": "Alice"}]}
+    route = respx.get(f"{AUTH}/users/search").mock(return_value=httpx.Response(200, json=users))
+    r = await client.get("/auth/users/search", params={"username": "ali"}, headers={"authorization": "Bearer abc"})
     assert r.status_code == 200
-    assert r.json() == alice
-    assert route.calls.last.request.headers["authorization"] == "Bearer abc"
+    assert r.json() == users
+    sent = route.calls.last.request
+    assert sent.url.params["username"] == "ali"
+    assert sent.headers["authorization"] == "Bearer abc"
 
-    missing = {"error": "user_not_found", "message": "No player has this username."}
-    respx.get(f"{AUTH}/users/by-username/bob").mock(return_value=httpx.Response(404, json=missing))
-    r = await client.get("/auth/users/by-username/bob", headers={"authorization": "Bearer abc"})
-    assert r.status_code == 404
-    assert r.json() == missing
+    limited = {"error": "rate_limited", "message": "Too many attempts, try again later."}
+    route.mock(return_value=httpx.Response(429, json=limited))
+    r = await client.get("/auth/users/search", params={"username": "bob"}, headers={"authorization": "Bearer abc"})
+    assert r.status_code == 429
+    assert r.json() == limited

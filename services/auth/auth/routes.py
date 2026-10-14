@@ -3,7 +3,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Path, Query, Request, Response, status
-from sqlalchemy import func, select, update
+from sqlalchemy import case, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from tpsarena_common.events import CodeEmail, SessionsRevoked, UserDeleted
@@ -385,22 +385,29 @@ async def get_users(
     return UsersResponse(users=[PublicUser(user_id=row.id, username=row.username) for row in rows])
 
 
-@router.get(
-    "/users/by-username/{username}",
-    responses={401: {"model": ErrorResponse}, 404: {"model": ErrorResponse}, 429: {"model": ErrorResponse}},
-)
-async def get_user_by_username(
-    username: Annotated[str, Path(min_length=1, max_length=20)], user_id: CurrentUserId, session: Session
-) -> PublicUser:
-    """Find a player by exact username (any case), e.g. to send a friend request. Only public fields.
+@router.get("/users/search", responses={401: {"model": ErrorResponse}, 429: {"model": ErrorResponse}})
+async def search_users(
+    username: Annotated[str, Query(min_length=1, max_length=20, description="Part of a username, any case")],
+    user_id: CurrentUserId,
+    session: Session,
+) -> UsersResponse:
+    """Players whose username contains the given text (any case), e.g. to send a friend request. Only public fields.
 
-    Rate limited per player, so it can't be used to list every account.
+    The exact match comes first, then usernames starting with the text, then the rest; at most
+    `username_search_max_results` players. Rate limited per player, so it can't be used to list every account.
     """
     settings = get_settings()
     await ratelimit.hit("username_lookup", str(user_id), settings.username_lookup_rate_limit, 60)
-    row = (
-        await session.execute(select(User.id, User.username).where(func.lower(User.username) == username.lower()))
-    ).first()
-    if row is None:
-        raise APIError(404, "user_not_found", "No player has this username.")
-    return PublicUser(user_id=row.id, username=row.username)
+    needle = username.lower()
+    lower = func.lower(User.username)
+    rows = await session.execute(
+        select(User.id, User.username)
+        .where(lower.contains(needle, autoescape=True))
+        .order_by(
+            case((lower == needle, 0), (lower.startswith(needle, autoescape=True), 1), else_=2),
+            func.length(User.username),
+            lower,
+        )
+        .limit(settings.username_search_max_results)
+    )
+    return UsersResponse(users=[PublicUser(user_id=row.id, username=row.username) for row in rows])
