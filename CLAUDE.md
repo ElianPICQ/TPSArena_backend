@@ -103,13 +103,14 @@ python scripts/release_common.py X.Y.Z [--dry-run]         # release libs/common
   - Refresh tokens are stored hashed and rotated. Only a *rotated* token used again counts as theft and revokes every session.
   - Revoking every session (password reset, theft) publishes `auth.sessions_revoked`.
   - Passwords use Argon2 (pwdlib). 6-digit email codes are stored as HMAC-SHA256.
-  - Responses must not reveal whether an email is registered.
+  - Login takes `identifier`: the email or the username (any case; the old field name `email` still works).
+  - Responses must not reveal whether an email or username is registered (an unknown one gets the same `401 invalid_credentials` as a wrong password).
 - **Service-to-service authentication:**
   - Social → Server List uses a shared service secret.
   - Game servers register with `GAME_SERVER_SECRET` and then use their own `server_token`.
 - **Tests:** Python tests start testcontainers when `tests/conftest.py` is imported, before the app is imported, because settings and clients are created at import time. BFF tests mock the upstreams with `respx`. The test Redis has **no ACLs**, so check permission changes against the full stack.
 - Everything is async: SQLAlchemy async + asyncpg, `redis.asyncio`, `httpx`, `aiosmtplib`. Settings come from `pydantic-settings` (`get_settings()`, cached with `lru_cache`).
-- **SMTP** is configured only through env (`SMTP_*`): Mailpit locally, a Gmail app password for the alpha.
+- **SMTP** is configured only through env (`SMTP_*`): Mailpit locally, a Gmail app password for the alpha (`smtp.gmail.com:587`, `SMTP_STARTTLS=true`; recreate `auth` and `auth-worker` after changing them). The code emails are in French, the players' language (`auth/worker.py`).
 - **Secrets:** Auth, Server List and Social refuse `change-me-dev-*` or short secrets unless `ENVIRONMENT=development`. That is the default in the dev compose files and `.env.example`; tests set it in `conftest.py`. A new secret setting goes in the service's `SECRETS` tuple (`config.py`).
 - **Bruno collection (`bruno/`, local only: git-ignored, not in the repository):** one request per HTTP endpoint, sent by hand against the full stack. It has no pre-request scripts and no tests: inputs are `Local` environment variables, and post-response scripts only copy returned tokens and ids into the environment. When you add or change an endpoint, add or update its request there.
 - **Dev rate limits:** repeated end-to-end runs from one machine hit Auth's per-IP verify limit (`429`). Clear `auth:ratelimit:verify_*` in the dev Redis, or wait 15 minutes.

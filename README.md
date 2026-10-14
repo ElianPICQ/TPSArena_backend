@@ -53,7 +53,8 @@ Mailpit. Outside the stack you reach:
 - the BFF at http://localhost:8000 (OpenAPI docs at `/docs`);
 - Real-time at `ws://localhost:8005/ws`;
 - the Server List at http://localhost:8002, for game servers;
-- caught emails at http://localhost:8025 (Mailpit).
+- caught emails at http://localhost:8025 (Mailpit), unless `SMTP_*` in `.env` points to a real
+  provider (the alpha uses a Gmail app password: see `.env.example`).
 
 Try it:
 
@@ -100,7 +101,8 @@ Conventions for working in the code are in [`CLAUDE.md`](CLAUDE.md).
 
 ## Status
 
-- **Built:** every backend service in the design.
+- **Built:** every backend service in the design. The game client (BFF + Real-time) and the
+  dedicated game server (Server List) are connected to it.
 - **Not built yet:**
   - CI;
   - HTTPS / `wss`;
