@@ -207,15 +207,17 @@ async def resend_verification_code(body: EmailRequest, request: Request, session
 async def login(body: LoginRequest, request: Request, session: Session) -> TokenResponse:
     settings = get_settings()
     await ratelimit.hit("login_ip", client_ip(request), settings.login_rate_limit, 60)
-    await ratelimit.hit("login_email", body.email, settings.login_rate_limit, 60)
+    await ratelimit.hit("login_account", body.identifier, settings.login_rate_limit, 60)
 
-    user = await session.scalar(select(User).where(User.email == body.email))
+    # Email or username (any case): an unknown one gets the same answer as a wrong password.
+    match = User.email == body.identifier if body.is_email else func.lower(User.username) == body.identifier
+    user = await session.scalar(select(User).where(match))
     if user is None:
         security.verify_password(body.password, security.DUMMY_PASSWORD_HASH)
-        raise APIError(401, "invalid_credentials", "Invalid email or password.")
+        raise APIError(401, "invalid_credentials", "Invalid email, username or password.")
     if not security.verify_password(body.password, user.password_hash):
-        raise APIError(401, "invalid_credentials", "Invalid email or password.")
-    # Only revealed after a correct password, so it doesn't tell which emails are registered.
+        raise APIError(401, "invalid_credentials", "Invalid email, username or password.")
+    # Only revealed after a correct password, so it doesn't tell which accounts are registered.
     if user.email_verified_at is None:
         raise APIError(403, "email_not_verified", "Verify your email address before logging in.")
 

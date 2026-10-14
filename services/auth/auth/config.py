@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     code_ttl_minutes: int = 15
     code_max_attempts: int = 5
 
-    login_rate_limit: int = 10  # per minute, per IP and per email
+    login_rate_limit: int = 10  # per minute, per IP and per email or username
     verify_rate_limit: int = 10  # per 15 minutes, per IP and per email
     resend_email_rate_limit: int = 3  # code emails per 15 minutes, per email
     resend_ip_rate_limit: int = 10  # code emails per 15 minutes, per IP

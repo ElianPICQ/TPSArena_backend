@@ -118,6 +118,38 @@ async def test_unknown_email_login_matches_wrong_password(client: httpx.AsyncCli
     assert r.json()["error"] == "invalid_credentials"
 
 
+async def test_login_with_username(client: httpx.AsyncClient):
+    account, _ = await verified_account(client)
+    for identifier in (account["username"], account["username"].upper(), f"  {account['email'].upper()}  "):
+        r = await client.post("/login", json={"identifier": identifier, "password": account["password"]})
+        assert r.status_code == 200, identifier
+        assert r.json()["token_type"] == "bearer"
+
+    r = await client.post("/login", json={"identifier": account["username"], "password": "wrong-password"})
+    assert r.status_code == 401
+    assert r.json()["error"] == "invalid_credentials"
+    # An unknown username gets the same answer as a wrong password.
+    r = await client.post("/login", json={"identifier": f"nobody_{uuid.uuid4().hex[:8]}", "password": "secret123"})
+    assert r.status_code == 401
+    assert r.json()["error"] == "invalid_credentials"
+    assert (await client.post("/login", json={"identifier": "", "password": "x"})).status_code == 422
+
+
+async def test_unverified_account_by_username(client: httpx.AsyncClient):
+    account = new_account()
+    assert (await client.post("/register", json=account)).status_code == 201
+    r = await client.post("/login", json={"identifier": account["username"], "password": account["password"]})
+    assert r.status_code == 403
+    assert r.json()["error"] == "email_not_verified"
+
+
+async def test_login_rate_limited_per_username(client: httpx.AsyncClient):
+    body = {"identifier": f"user_{uuid.uuid4().hex[:8]}", "password": "secret123"}
+    statuses = [(await client.post("/login", json=body)).status_code for _ in range(get_settings().login_rate_limit + 1)]
+    assert statuses[-1] == 429
+    assert set(statuses[:-1]) == {401}
+
+
 async def test_code_locked_after_max_attempts(client: httpx.AsyncClient):
     account = new_account()
     await client.post("/register", json=account)

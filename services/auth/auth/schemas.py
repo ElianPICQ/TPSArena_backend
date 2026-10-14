@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, EmailStr, Field, field_validator
+from pydantic import AliasChoices, BaseModel, EmailStr, Field, field_validator
 
 
 class RegisterRequest(BaseModel):
@@ -54,13 +54,20 @@ class MessageResponse(BaseModel):
 
 
 class LoginRequest(BaseModel):
-    email: EmailStr
+    # Email or username (usernames can't contain "@"). `email` is still accepted as the field name.
+    identifier: str = Field(
+        min_length=1, max_length=320, validation_alias=AliasChoices("identifier", "email"), description="Email or username"
+    )
     password: str = Field(max_length=128)
 
-    @field_validator("email")
+    @field_validator("identifier")
     @classmethod
-    def lower_email(cls, v: str) -> str:
-        return v.lower()
+    def lower_identifier(cls, v: str) -> str:
+        return v.strip().lower()
+
+    @property
+    def is_email(self) -> bool:
+        return "@" in self.identifier
 
 
 class RefreshTokenRequest(BaseModel):
