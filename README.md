@@ -6,9 +6,11 @@ join a running match from a public server list. Around that, the backend provide
 friends, chat, presence, stats and leaderboards.
 
 The backend is a set of microservices that talk over HTTP and Redis Streams. The Godot client
-and the dedicated game server are not in this repository yet.
+and the dedicated game server are one Godot project in a separate repository (checked out next to
+this one, in `../TPSArena_Jeu/client/`).
 
-The full design is in [`project-context.md`](project-context.md), and open gaps are in [`TODO.md`](TODO.md).
+The full design is in [`project-context.md`](../project-context.md) (in the folder above this
+repository), and open gaps are in [`TODO.md`](TODO.md).
 
 ## Services
 
@@ -30,7 +32,7 @@ Shared pieces:
 Game client ──HTTPS──> BFF ──> Auth · Server List · Social · Stats
      │                                                     ▲
      └──WebSocket──> Real-time <──Redis Streams (events)───┘
-Game server ──HTTPS──> Server List ; publishes match results to Redis Streams
+Game server ──HTTPS──> Server List ; which publishes its match results to Redis Streams
 ```
 
 ## Running the full stack
@@ -63,10 +65,9 @@ curl -X POST localhost:8000/auth/verify-email -H 'content-type: application/json
   -d '{"email": "alice@example.dev", "code": "123456"}'     # returns the access and refresh tokens
 ```
 
-To exercise every endpoint at once, open [`bruno/`](bruno) in [Bruno](https://www.usebruno.com/) and run the
-collection with the `Local` environment, or run `npx @usebruno/cli run --env Local` from that folder.
-It creates two players, reads their codes from Mailpit, goes through friends, a party launch, a
-match and stats, and deletes both accounts at the end.
+To try the endpoints by hand, open a local [Bruno](https://www.usebruno.com/) collection in `bruno/`
+(git-ignored, so not in the repository) and select the `Local` environment: it has one request per endpoint. Set your email, username and password in
+the environment, then send Register, Verify email (with the code from Mailpit) and Login.
 
 To read the tables, see [`DATABASES.md`](DATABASES.md).
 
@@ -101,7 +102,8 @@ Conventions for working in the code are in [`CLAUDE.md`](CLAUDE.md).
 
 - **Built:** every backend service in the design.
 - **Not built yet:**
-  - the Godot client and dedicated game server;
+  - the connection between the game and the backend: the client still uses a simulated backend,
+    and the dedicated game server runs in LAN mode only (see [`TODO.md`](TODO.md));
   - CI;
   - HTTPS / `wss`;
   - deployment;

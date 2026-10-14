@@ -6,11 +6,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 TPSArena: a third-person free-for-all multiplayer shooter. The client and dedicated servers are Godot 4 (GDScript). The backend is microservices.
 
-- **`project-context.md` is the design spec**: settled decisions on services, Redis keys, streams, flows and API outline. Read it before adding a service or endpoint, follow it unless the user says otherwise, and update it when a decision changes.
+- **`../project-context.md` is the design spec** (it lives in the workspace folder above this repo, not in the repo): settled decisions on services, Redis keys, streams, flows and API outline. Read it before adding a service or endpoint, follow it unless the user says otherwise, and update it when a decision changes.
 - **`TODO.md`** lists known gaps and deferred design issues. Remove an item when it is done, and add new gaps there instead of leaving them only in code comments.
 - **`README.md`** is the human-facing overview (services, running the stack, status). Keep its status section in line with `TODO.md`.
 
-Every backend service in the spec is implemented: `services/{auth,serverlist,social,stats,bff,realtime}` and the shared package `libs/common`. The Godot client and the dedicated game server don't exist yet. The game server's events (`player.match`, `match.finished`) are defined, and tests publish them by hand.
+Every backend service in the spec is implemented: `services/{auth,serverlist,social,stats,bff,realtime}` and the shared package `libs/common`. The Godot client is a separate repo, checked out at `../TPSArena_Jeu/client/`. The dedicated game server doesn't exist yet (`../TPSArena_Jeu/server/` is reserved for it). The game server's events (`player.match`, `match.finished`) are defined, and tests publish them by hand.
 
 Development happens on both Debian and Windows 11 (Docker Desktop + WSL 2). Keep LF line endings (`.gitattributes`), avoid OS-specific paths, and write helper scripts in Python (see `scripts/`).
 
@@ -111,5 +111,5 @@ python scripts/release_common.py X.Y.Z [--dry-run]         # release libs/common
 - Everything is async: SQLAlchemy async + asyncpg, `redis.asyncio`, `httpx`, `aiosmtplib`. Settings come from `pydantic-settings` (`get_settings()`, cached with `lru_cache`).
 - **SMTP** is configured only through env (`SMTP_*`): Mailpit locally, a Gmail app password for the alpha.
 - **Secrets:** Auth, Server List and Social refuse `change-me-dev-*` or short secrets unless `ENVIRONMENT=development`. That is the default in the dev compose files and `.env.example`; tests set it in `conftest.py`. A new secret setting goes in the service's `SECRETS` tuple (`config.py`).
-- **Bruno collection (`bruno/`):** it covers every HTTP endpoint as one scenario run against the full stack (`npx @usebruno/cli run --env Local` from `bruno/`). When you add or change an endpoint, add or update its request there.
+- **Bruno collection (`bruno/`, local only: git-ignored, not in the repository):** one request per HTTP endpoint, sent by hand against the full stack. It has no pre-request scripts and no tests: inputs are `Local` environment variables, and post-response scripts only copy returned tokens and ids into the environment. When you add or change an endpoint, add or update its request there.
 - **Dev rate limits:** repeated end-to-end runs from one machine hit Auth's per-IP verify limit (`429`). Clear `auth:ratelimit:verify_*` in the dev Redis, or wait 15 minutes.
