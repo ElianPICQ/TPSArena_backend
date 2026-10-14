@@ -5,6 +5,7 @@ import uuid
 
 from fastapi import APIRouter, Query, Response, status
 from fastapi.security import HTTPAuthorizationCredentials
+from tpsarena_common.events import MatchFinished, PlayerMatchChanged, publish
 
 from serverlist import scripts
 from serverlist.config import get_settings
@@ -26,6 +27,8 @@ from serverlist.schemas import (
     HeartbeatRequest,
     HeartbeatResponse,
     JoinTicketResponse,
+    MatchFinishedRequest,
+    PlayerMatchRequest,
     PublicServer,
     RegisterServerRequest,
     RegisterServerResponse,
@@ -174,6 +177,31 @@ async def verify_ticket(body: VerifyTicketRequest, credentials: Credentials) -> 
     if value is None:
         raise APIError(401, "invalid_ticket", "The ticket is invalid, expired or already used.")
     return VerifyTicketResponse(user_id=json.loads(value)["user_id"])
+
+
+@router.post(
+    "/servers/{server_id}/match-finished",
+    status_code=status.HTTP_202_ACCEPTED,
+    responses={**SERVER_ERRORS, 403: {"model": ErrorResponse}},
+)
+async def match_finished(server_id: uuid.UUID, body: MatchFinishedRequest, credentials: Credentials) -> Response:
+    """The server's match ended: published on match.finished (Stats saves it, Social puts the party
+    back in the lobby). Game servers have no Redis access, so they send their events here."""
+    await require_server(str(server_id), credentials)
+    if body.server_id != server_id:
+        raise APIError(403, "wrong_server", "A server can only report its own matches.")
+    await publish(redis, MatchFinished(**body.model_dump()), maxlen=get_settings().events_stream_maxlen)
+    return Response(status_code=status.HTTP_202_ACCEPTED)
+
+
+@router.post("/servers/{server_id}/player-match", status_code=status.HTTP_202_ACCEPTED, responses=SERVER_ERRORS)
+async def player_match(server_id: uuid.UUID, body: PlayerMatchRequest, credentials: Credentials) -> Response:
+    """A player joined or left the server's match: published on player.match (Real-time shows
+    them "in match" to their friends)."""
+    await require_server(str(server_id), credentials)
+    event = PlayerMatchChanged(user_id=body.user_id, server_id=server_id, action=body.action)
+    await publish(redis, event, maxlen=get_settings().events_stream_maxlen)
+    return Response(status_code=status.HTTP_202_ACCEPTED)
 
 
 # --- Players (access token, through the BFF) ---

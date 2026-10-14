@@ -22,6 +22,14 @@ its heartbeats for 15 s is removed (`404 server_not_found` on its next heartbeat
 Events on `serverlist.events`, added by the Lua scripts themselves: `server.removed` (deregistered,
 or removed by the sweeper that runs in each API instance) and `server.reservation_expired`.
 
+Game servers have no Redis access, so they send their own events here, with their `server_token`,
+and the Server List publishes them:
+- `POST /servers/{id}/match-finished`: the `match.finished` fields without `event_id`
+  (`server_id` must be the caller's, else `403 wrong_server`). Stats saves the match, Social puts
+  the party back in the lobby.
+- `POST /servers/{id}/player-match`: `{user_id, action: joined | left}`, published on `player.match`
+  (Real-time shows the player "in match").
+
 ## Tests
 `uv run pytest` — starts a throwaway Redis container (Docker must be running), nothing else needed.
 

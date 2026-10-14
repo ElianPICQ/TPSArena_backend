@@ -102,8 +102,6 @@ Conventions for working in the code are in [`CLAUDE.md`](CLAUDE.md).
 
 - **Built:** every backend service in the design.
 - **Not built yet:**
-  - the connection between the game and the backend: the client still uses a simulated backend,
-    and the dedicated game server runs in LAN mode only (see [`TODO.md`](TODO.md));
   - CI;
   - HTTPS / `wss`;
   - deployment;

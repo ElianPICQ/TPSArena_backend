@@ -10,7 +10,7 @@ TPSArena: a third-person free-for-all multiplayer shooter. The client and dedica
 - **`TODO.md`** lists known gaps and deferred design issues. Remove an item when it is done, and add new gaps there instead of leaving them only in code comments.
 - **`README.md`** is the human-facing overview (services, running the stack, status). Keep its status section in line with `TODO.md`.
 
-Every backend service in the spec is implemented: `services/{auth,serverlist,social,stats,bff,realtime}` and the shared package `libs/common`. The Godot client is a separate repo, checked out at `../TPSArena_Jeu/client/`. The dedicated game server doesn't exist yet (`../TPSArena_Jeu/server/` is reserved for it). The game server's events (`player.match`, `match.finished`) are defined, and tests publish them by hand.
+Every backend service in the spec is implemented: `services/{auth,serverlist,social,stats,bff,realtime}` and the shared package `libs/common`. The Godot client is a separate repo, checked out at `../TPSArena_Jeu/client/`. The dedicated game server is the same Godot project (exported builds go to `../TPSArena_Jeu/server/`). It registers with the Server List and sends its events (`player.match`, `match.finished`) through `POST /servers/{id}/player-match` and `/match-finished`, which publish them. The client talks to the BFF and to Real-time.
 
 Development happens on both Debian and Windows 11 (Docker Desktop + WSL 2). Keep LF line endings (`.gitattributes`), avoid OS-specific paths, and write helper scripts in Python (see `scripts/`).
 

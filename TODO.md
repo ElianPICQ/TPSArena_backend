@@ -1,17 +1,12 @@
 # To do later
 
 ## Godot dedicated server
-The dedicated server exists (game repo, `front/scripts/server/`) but only in LAN mode
-(`LanLink`: no backend calls). Connecting it to the backend:
-- **Server List: routes for the game server's events.** `POST /servers/{id}/match-finished` and
-  `POST /servers/{id}/player-match`, with `Authorization: Bearer <server_token>`. Validate the body
-  with `MatchFinished` / `PlayerMatchChanged`, check that `server_id` is the caller's, publish with
-  `tpsarena_common.events.publish`. Give the `serverlist` ACL user write access to
-  `match.finished` and `player.match` (`infra/redis/start.sh`), and add the tests (and the requests in the local Bruno collection).
-- **`ServerListLink`** (game repo, next to `lan_link.gd`): register with `GAME_SERVER_SECRET`, a
-  heartbeat every 5 s (a `Timer` and `HTTPRequest`), verify tickets, send the two events,
-  deregister on exit. Start the match when every reserved slot is connected or 30 s after the
-  reservation, instead of the LAN lobby leader.
+The dedicated server is connected (game repo, `front/scripts/server/server_list_link.gd`:
+registration, heartbeat, reservation, tickets, `player.match` / `match.finished` through the
+Server List). Points to keep in mind:
+- **Deregistration on Ctrl+C.** A killed server doesn't send `DELETE /servers/{id}`; the sweeper
+  removes it after 15 s. A reservation made in those 15 s fails for the party (`server.removed`
+  puts it back in the lobby).
 - **`max_players`: already enforced** by the game server: it refuses a new player when 8 are
   already connected, even with a valid ticket. Keep it that way: the Server List's player count
   can be off by one for up to a heartbeat (5 s), because a heartbeat sent just before the player

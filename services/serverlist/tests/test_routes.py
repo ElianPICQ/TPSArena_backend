@@ -1,7 +1,14 @@
 import uuid
 
 import httpx
-from tpsarena_common.events import Event, ReservationExpired, ServerRemoved, decode
+from tpsarena_common.events import (
+    Event,
+    MatchFinished,
+    PlayerMatchChanged,
+    ReservationExpired,
+    ServerRemoved,
+    decode,
+)
 
 from serverlist.config import get_settings
 from serverlist.redis_client import ACTIVE_SERVERS, EVENTS_STREAM, redis, server_key, server_party_key, server_tickets_key
@@ -363,3 +370,94 @@ async def test_cannot_join_idle_or_reserved_server(client):
 
     r = await client.post(f"/servers/{uuid.uuid4()}/join-ticket", headers=player())
     assert r.status_code == 404
+
+
+# --- Game server events (published for the game server, which has no Redis access) ---
+
+
+async def stream_events(stream: str) -> list[Event]:
+    return [decode(fields) for _, fields in await redis.xrange(stream)]
+
+
+def match_result(server_id: str, **overrides) -> dict:
+    return {
+        "match_id": str(uuid.uuid4()),
+        "server_id": server_id,
+        "party_id": "p1",
+        "map": "neo-edo",
+        "started_at": "2026-10-14T10:00:00Z",
+        "ended_at": "2026-10-14T10:03:00Z",
+        "players": [
+            {"user_id": str(uuid.uuid4()), "kills": 5, "deaths": 1, "placement": 1},
+            {"user_id": str(uuid.uuid4()), "kills": 1, "deaths": 5, "placement": 2},
+        ],
+        **overrides,
+    }
+
+
+async def test_match_finished_is_published(client):
+    server_id = await register(client)
+    body = match_result(server_id)
+    r = await client.post(f"/servers/{server_id}/match-finished", json=body, headers=as_server(server_id))
+    assert r.status_code == 202, r.text
+    [event] = await stream_events("match.finished")
+    assert isinstance(event, MatchFinished)
+    assert str(event.match_id) == body["match_id"]
+    assert str(event.server_id) == server_id
+    assert event.party_id == "p1"
+    assert [p.kills for p in event.players] == [5, 1]
+
+
+async def test_match_finished_only_for_the_calling_server(client):
+    server_id = await register(client)
+    other = await register(client)
+    url = f"/servers/{server_id}/match-finished"
+    # Its own token, but another server's match.
+    r = await client.post(url, json=match_result(other), headers=as_server(server_id))
+    assert r.status_code == 403
+    assert r.json()["error"] == "wrong_server"
+    # Another server's token.
+    r = await client.post(url, json=match_result(server_id), headers=as_server(other))
+    assert r.status_code == 401
+    # An unknown (or removed) server registers again.
+    unknown = str(uuid.uuid4())
+    r = await client.post(f"/servers/{unknown}/match-finished", json=match_result(unknown), headers=as_server(server_id))
+    assert r.status_code == 404
+    assert await stream_events("match.finished") == []
+
+
+async def test_match_finished_validates_the_result(client):
+    server_id = await register(client)
+    twice = str(uuid.uuid4())
+    duplicate = [{"user_id": twice, "kills": 0, "deaths": 0, "placement": 1}] * 2
+    for body in (match_result(server_id, players=duplicate), match_result(server_id, map=""), {"server_id": server_id}):
+        r = await client.post(f"/servers/{server_id}/match-finished", json=body, headers=as_server(server_id))
+        assert r.status_code == 422
+    assert await stream_events("match.finished") == []
+
+
+async def test_player_match_is_published(client):
+    server_id = await register(client)
+    user_id = str(uuid.uuid4())
+    for action in ("joined", "left"):
+        body = {"user_id": user_id, "action": action}
+        r = await client.post(f"/servers/{server_id}/player-match", json=body, headers=as_server(server_id))
+        assert r.status_code == 202, r.text
+    events = await stream_events("player.match")
+    assert all(isinstance(e, PlayerMatchChanged) for e in events)
+    assert [(str(e.user_id), str(e.server_id), e.action) for e in events] == [
+        (user_id, server_id, "joined"),
+        (user_id, server_id, "left"),
+    ]
+
+
+async def test_player_match_needs_the_server_token(client):
+    server_id = await register(client)
+    body = {"user_id": str(uuid.uuid4()), "action": "joined"}
+    assert (await client.post(f"/servers/{server_id}/player-match", json=body)).status_code == 401
+    r = await client.post(f"/servers/{server_id}/player-match", json=body, headers=GAME_SERVER)
+    assert r.status_code == 401  # the shared secret is only for registering
+    invalid = {**body, "action": "spectating"}
+    r = await client.post(f"/servers/{server_id}/player-match", json=invalid, headers=as_server(server_id))
+    assert r.status_code == 422
+    assert await stream_events("player.match") == []

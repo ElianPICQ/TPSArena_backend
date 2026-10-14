@@ -1,7 +1,10 @@
 import uuid
+from datetime import datetime
 from enum import StrEnum
+from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
+from tpsarena_common.events import MatchPlayerResult
 
 from serverlist.config import get_settings
 
@@ -95,6 +98,33 @@ class AllocationResponse(BaseModel):
     port: int
     tickets: dict[uuid.UUID, str]  # user_id -> ticket
     expires_in: int
+
+
+class MatchFinishedRequest(BaseModel):
+    """The fields of the match.finished event (tpsarena_common.events.MatchFinished) without
+    event_id, which the Server List adds when it publishes."""
+
+    match_id: uuid.UUID
+    server_id: uuid.UUID = Field(description="Must be the calling server's id")
+    party_id: str | None = Field(default=None, max_length=64)
+    map: str = Field(min_length=1, max_length=64)
+    started_at: datetime
+    ended_at: datetime
+    players: list[MatchPlayerResult] = Field(description="Everyone who played, including players who left")
+
+    @field_validator("players")
+    @classmethod
+    def one_result_per_player(cls, players: list[MatchPlayerResult]) -> list[MatchPlayerResult]:
+        if len({p.user_id for p in players}) != len(players):
+            raise ValueError("a player can only appear once")
+        return players
+
+
+class PlayerMatchRequest(BaseModel):
+    """A player entered or left the server's match (player.match event, server_id added)."""
+
+    user_id: uuid.UUID
+    action: Literal["joined", "left"]
 
 
 class ErrorResponse(BaseModel):
