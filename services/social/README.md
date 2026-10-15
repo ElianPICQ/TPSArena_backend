@@ -1,6 +1,6 @@
 # Social API
 
-Profiles, friends, parties, invites, party launch. A worker (`python -m social.worker`) handles `user.deleted`, `presence.changed`, `match.finished` and `serverlist.events`, and publishes friend events left in the outbox.
+Profiles, saved classes (loadouts: up to 10 per player, `GET`/`PUT /loadouts/me`), friends, parties, invites, party launch. A worker (`python -m social.worker`) handles `user.deleted`, `presence.changed`, `match.finished` and `serverlist.events`, and publishes friend events left in the outbox.
 
 Port 8003. Owns: PostgreSQL database `social`, Redis keys `social:*`.
 

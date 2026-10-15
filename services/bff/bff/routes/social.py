@@ -1,4 +1,4 @@
-"""Profiles, friends and parties: forwarded to Social, with player names from Auth added."""
+"""Profiles, saved classes, friends and parties: forwarded to Social, with player names from Auth added."""
 
 import uuid
 from typing import Annotated
@@ -57,6 +57,19 @@ async def get_profile(user_id: uuid.UUID, request: Request) -> Response:
 @router.patch("/profiles/me")
 async def update_my_profile(request: Request) -> Response:
     return await forward(request, "/profiles/me", "PATCH")
+
+
+# --- Loadouts (saved classes) ---
+
+
+@router.get("/loadouts/me")
+async def get_my_loadouts(request: Request) -> Response:
+    return await forward(request, "/loadouts/me", "GET")
+
+
+@router.put("/loadouts/me")
+async def replace_my_loadouts(request: Request) -> Response:
+    return await forward(request, "/loadouts/me", "PUT")
 
 
 # --- Friends ---

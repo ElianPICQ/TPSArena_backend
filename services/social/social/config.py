@@ -29,6 +29,12 @@ class Settings(BaseSettings):
     bio_max_length: int = 200
     max_friends: int = 200
 
+    # Saved classes (game equipment). Weapon ids are the game's WeaponData.id values.
+    max_loadouts: int = 10
+    loadout_name_max_length: int = 24
+    primary_weapons: list[str] = ["smg", "shotgun", "sniper", "rocket", "flamer"]
+    secondary_weapons: list[str] = ["laser", "katana", "poop"]
+
     max_party_size: int = 8
     invite_ttl_seconds: int = 60
 
