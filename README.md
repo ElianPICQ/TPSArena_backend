@@ -22,6 +22,7 @@ repository), and open gaps are in [`TODO.md`](TODO.md).
 | [Social](services/social) | Python, FastAPI | 8003 | Profiles, saved classes (loadouts), friends, parties, invites, party launch |
 | [Stats](services/stats) | Python, FastAPI | 8004 | Match results and history, XP, levels, achievements, leaderboards |
 | [Real-time](services/realtime) | TypeScript, Node 24+ | 8005 | One WebSocket per player: presence, friend messages, party chat, live notifications ([protocol](services/realtime/PROTOCOL.md)) |
+| [Web BFF](services/web-bff) | Python, FastAPI | 8006 | Entry point of the companion PWA (served by `TPSArena_Site` under `/app/`): login with a refresh cookie, stats, progression, history, leaderboards, friends, message history. No parties or servers |
 
 Shared pieces:
 - **[`libs/common`](libs/common)** (`tpsarena-common`): JWT verification, event models, Redis Streams consumer, transactional outbox. Services pin a released git tag (`common-vX.Y.Z`).
@@ -33,6 +34,8 @@ Game client ──HTTPS──> BFF ──> Auth · Server List · Social · Stat
      │                                                     ▲
      └──WebSocket──> Real-time <──Redis Streams (events)───┘
 Game server ──HTTPS──> Server List ; which publishes its match results to Redis Streams
+Companion PWA ──HTTPS──> site nginx (/api/) ──> Web BFF ──> Auth · Stats · Social · Real-time
+     └──WebSocket (client: mobile)──> site nginx (/ws) ──> Real-time
 ```
 
 ## Running the full stack
@@ -47,12 +50,14 @@ ssh-add                                                      # once per session
 docker compose up -d --build
 ```
 
-This starts 15 containers: the services and their workers, one PostgreSQL per service, Redis and
+This starts 16 containers: the services and their workers, one PostgreSQL per service, Redis and
 Mailpit. Outside the stack you reach:
 
 - the BFF at http://localhost:8000 (OpenAPI docs at `/docs`);
 - Real-time at `ws://localhost:8005/ws`;
 - the Server List at http://localhost:8002, for game servers;
+- the Web BFF at http://127.0.0.1:8006 (host only; players go through `TPSArena_Site`'s
+  `/api/`, on the `tpsarena-web` Docker network);
 - caught emails at http://localhost:8025 (Mailpit), unless `SMTP_*` in `.env` points to a real
   provider (the alpha uses a Gmail app password: see `.env.example`).
 
@@ -81,7 +86,7 @@ The Python services use [uv](https://docs.astral.sh/uv/) and Python 3.13+. Real-
 Tests start their own throwaway PostgreSQL and Redis containers, so only Docker needs to be running.
 
 ```sh
-cd services/<name> && uv sync && uv run pytest     # auth, serverlist, social, stats, bff
+cd services/<name> && uv sync && uv run pytest     # auth, serverlist, social, stats, bff, web-bff
 cd services/realtime && npm install && npm test
 cd libs/common && uv run pytest
 ```

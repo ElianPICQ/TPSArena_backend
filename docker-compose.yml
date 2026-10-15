@@ -16,3 +16,5 @@ include:
     env_file: .env
   - path: services/bff/compose.yaml
     env_file: .env
+  - path: services/web-bff/compose.yaml
+    env_file: .env

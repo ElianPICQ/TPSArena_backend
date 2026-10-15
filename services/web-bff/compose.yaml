@@ -1,0 +1,27 @@
+# Web BFF alone:  docker compose up --build   (calls Auth and Stats on the host by default)
+# In the full stack this file is included by the root docker-compose.yml (root .env sets the URLs).
+services:
+  web-bff:
+    build: .
+    restart: unless-stopped
+    environment:
+      AUTH_URL: ${AUTH_URL:-http://host.docker.internal:8001}
+      SOCIAL_URL: ${SOCIAL_URL:-http://host.docker.internal:8003}
+      STATS_URL: ${STATS_URL:-http://host.docker.internal:8004}
+      REALTIME_URL: ${REALTIME_URL:-http://host.docker.internal:8005}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      # Loopback only: players reach it through the site's nginx (/api/), which sets X-Forwarded-For.
+      # Published on the LAN, anyone could forge that header and dodge Auth's per-IP rate limits.
+      - "127.0.0.1:8006:8006"
+    networks:
+      default:
+      web:
+        aliases: [web-bff]
+
+networks:
+  # Shared with TPSArena_Site (same name in its compose.yaml): its nginx proxies /api/ here.
+  # Whichever project starts first creates it.
+  web:
+    name: tpsarena-web
