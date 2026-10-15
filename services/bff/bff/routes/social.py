@@ -27,13 +27,16 @@ async def send(request: Request, path: str, method: str):
 
 
 async def party_with_names(request: Request, path: str, method: str) -> Response:
-    """Party answers get a `members` list with names next to `member_ids`."""
+    """Party answers get a `members` list (name and class of each) next to `member_ids`."""
     answer = await send(request, path, method)
     if isinstance(answer, Response) or not answer.is_success:
         return answer if isinstance(answer, Response) else upstream.relay(answer)
     party = answer.json()
     names = await usernames(request, party["member_ids"]) or {}
-    party["members"] = [{"user_id": i, "username": names.get(i)} for i in party["member_ids"]]
+    classes = party.get("classes", {})
+    party["members"] = [
+        {"user_id": i, "username": names.get(i), "class_id": classes.get(i)} for i in party["member_ids"]
+    ]
     return JSONResponse(status_code=answer.status_code, content=party)
 
 
@@ -127,6 +130,16 @@ async def leave(party_id: uuid.UUID, request: Request) -> Response:
 @router.post("/parties/{party_id}/kick")
 async def kick(party_id: uuid.UUID, request: Request) -> Response:
     return await forward(request, f"/parties/{party_id}/kick")
+
+
+@router.post("/parties/{party_id}/leader")
+async def give_lead(party_id: uuid.UUID, request: Request) -> Response:
+    return await forward(request, f"/parties/{party_id}/leader")
+
+
+@router.put("/parties/{party_id}/class")
+async def set_class(party_id: uuid.UUID, request: Request) -> Response:
+    return await forward(request, f"/parties/{party_id}/class", "PUT")
 
 
 @router.post("/parties/{party_id}/launch")

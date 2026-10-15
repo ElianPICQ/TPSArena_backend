@@ -105,14 +105,24 @@ async def test_friends_still_listed_when_auth_is_down(client):
 async def test_party_answers_get_member_names(client, method, path, upstream_path):
     party_id = str(uuid.uuid4())
     a, b = str(uuid.uuid4()), str(uuid.uuid4())
-    party = {"party_id": party_id, "leader_id": a, "status": "lobby", "member_ids": [a, b], "version": 2}
+    party = {
+        "party_id": party_id,
+        "leader_id": a,
+        "status": "lobby",
+        "member_ids": [a, b],
+        "version": 2,
+        "classes": {a: "samurai"},
+    }
     respx.request(method, SOCIAL + upstream_path.format(party=party_id)).mock(
         return_value=httpx.Response(200, json=party)
     )
     respx.get(f"{AUTH}/users").mock(side_effect=auth_names({a: "alice", b: "bob"}))
 
     r = await client.request(method, path.format(party=party_id), headers=TOKEN)
-    assert r.json()["members"] == [{"user_id": a, "username": "alice"}, {"user_id": b, "username": "bob"}]
+    assert r.json()["members"] == [
+        {"user_id": a, "username": "alice", "class_id": "samurai"},
+        {"user_id": b, "username": "bob", "class_id": None},
+    ]
 
 
 @pytest.mark.parametrize(
@@ -126,6 +136,8 @@ async def test_party_answers_get_member_names(client, method, path, upstream_pat
         ("POST", "/parties/{id}/invite"),
         ("POST", "/parties/{id}/leave"),
         ("POST", "/parties/{id}/kick"),
+        ("POST", "/parties/{id}/leader"),
+        ("PUT", "/parties/{id}/class"),
         ("POST", "/parties/{id}/launch"),
     ],
 )

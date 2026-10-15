@@ -2,6 +2,7 @@
 
     social:party:{party_id}            hash    leader_id, status (lobby | launching | in_match), version, created_at, server_id
     social:party:{party_id}:members    set     up to 8 user ids
+    social:party:{party_id}:classes    hash    user_id -> class each member plays (shown in the party lobby)
     social:user:{user_id}:party        string  party_id (one party per player)
     social:invite:{invite_id}          hash    party_id, from, to   (TTL 60 s)
 
@@ -30,6 +31,10 @@ def party_key(party_id: str) -> str:
 
 def members_key(party_id: str) -> str:
     return f"social:party:{party_id}:members"
+
+
+def classes_key(party_id: str) -> str:
+    return f"social:party:{party_id}:classes"
 
 
 def user_party_key(user_id: uuid.UUID | str) -> str:
@@ -104,15 +109,16 @@ return 'ok'
 
 REMOVE_MEMBER = redis.register_script(PUBLISH + """
 -- Leave, kick, disconnect, account deleted.
--- KEYS: party, members, user party (of the member), stream
+-- KEYS: party, members, user party (of the member), classes, stream
 -- ARGV: user_id, party_id, required leader ('' = any), event_id, maxlen
 local leader = redis.call('HGET', KEYS[1], 'leader_id')
 if not leader then return 'not_found' end
 if ARGV[3] ~= '' and leader ~= ARGV[3] then return 'not_leader' end
 if redis.call('SREM', KEYS[2], ARGV[1]) == 0 then return 'not_member' end
 if redis.call('GET', KEYS[3]) == ARGV[2] then redis.call('DEL', KEYS[3]) end
+redis.call('HDEL', KEYS[4], ARGV[1])
 if redis.call('SCARD', KEYS[2]) == 0 then
-  redis.call('DEL', KEYS[1], KEYS[2])
+  redis.call('DEL', KEYS[1], KEYS[2], KEYS[4])
   publish_party(KEYS[1], KEYS[2], ARGV[2])
   return 'disbanded'
 end
@@ -121,6 +127,31 @@ if leader == ARGV[1] then
 end
 redis.call('HINCRBY', KEYS[1], 'version', 1)
 publish_party(KEYS[1], KEYS[2], ARGV[2])
+return 'ok'
+""")
+
+SET_LEADER = redis.register_script(PUBLISH + """
+-- KEYS: party, members, stream   ARGV: party_id, current leader, new leader, event_id, maxlen
+local leader = redis.call('HGET', KEYS[1], 'leader_id')
+if not leader then return 'not_found' end
+if leader ~= ARGV[2] then return 'not_leader' end
+if redis.call('SISMEMBER', KEYS[2], ARGV[3]) == 0 then return 'not_member' end
+if leader == ARGV[3] then return 'ok' end
+redis.call('HSET', KEYS[1], 'leader_id', ARGV[3])
+redis.call('HINCRBY', KEYS[1], 'version', 1)
+publish_party(KEYS[1], KEYS[2], ARGV[1])
+return 'ok'
+""")
+
+SET_CLASS = redis.register_script(PUBLISH + """
+-- KEYS: party, members, classes, stream   ARGV: party_id, user_id, class_id, event_id, maxlen
+-- party.updated has no classes: members reload the party (GET) when its version changes.
+if redis.call('EXISTS', KEYS[1]) == 0 then return 'not_found' end
+if redis.call('SISMEMBER', KEYS[2], ARGV[2]) == 0 then return 'not_found' end
+if redis.call('HGET', KEYS[3], ARGV[2]) == ARGV[3] then return 'ok' end
+redis.call('HSET', KEYS[3], ARGV[2], ARGV[3])
+redis.call('HINCRBY', KEYS[1], 'version', 1)
+publish_party(KEYS[1], KEYS[2], ARGV[1])
 return 'ok'
 """)
 
@@ -163,13 +194,15 @@ class Party:
     version: int
     member_ids: list[uuid.UUID]
     server_id: str | None
+    classes: dict[uuid.UUID, str]  # members who told their class
 
 
 async def get_party(party_id: str) -> Party | None:
     async with redis.pipeline(transaction=True) as pipe:
         pipe.hgetall(party_key(party_id))
         pipe.smembers(members_key(party_id))
-        data, members = await pipe.execute()
+        pipe.hgetall(classes_key(party_id))
+        data, members, classes = await pipe.execute()
     if not data:
         return None
     return Party(
@@ -179,6 +212,7 @@ async def get_party(party_id: str) -> Party | None:
         version=int(data["version"]),
         member_ids=sorted(uuid.UUID(m) for m in members),
         server_id=data.get("server_id"),
+        classes={uuid.UUID(u): c for u, c in classes.items() if u in members},
     )
 
 
@@ -201,8 +235,24 @@ async def create(user_id: uuid.UUID) -> str:
 async def remove_member(party_id: str, user_id: uuid.UUID, required_leader: uuid.UUID | None = None) -> str:
     """Returns 'ok', 'disbanded', 'not_found', 'not_leader' or 'not_member'; publishes the change."""
     return await REMOVE_MEMBER(
-        keys=[party_key(party_id), members_key(party_id), user_party_key(user_id), EVENTS_STREAM],
+        keys=[party_key(party_id), members_key(party_id), user_party_key(user_id), classes_key(party_id), EVENTS_STREAM],
         args=[str(user_id), party_id, str(required_leader or ""), *event_args()],
+    )
+
+
+async def set_leader(party_id: str, leader_id: uuid.UUID, new_leader_id: uuid.UUID) -> str:
+    """Returns 'ok', 'not_found', 'not_leader' or 'not_member'; publishes the change."""
+    return await SET_LEADER(
+        keys=[party_key(party_id), members_key(party_id), EVENTS_STREAM],
+        args=[party_id, str(leader_id), str(new_leader_id), *event_args()],
+    )
+
+
+async def set_class(party_id: str, user_id: uuid.UUID, class_id: str) -> str:
+    """Returns 'ok' or 'not_found' (no party, or not a member); publishes the change."""
+    return await SET_CLASS(
+        keys=[party_key(party_id), members_key(party_id), classes_key(party_id), EVENTS_STREAM],
+        args=[party_id, str(user_id), class_id, *event_args()],
     )
 
 

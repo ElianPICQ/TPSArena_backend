@@ -9,6 +9,7 @@ from social.deps import CurrentUserId, Session
 from social.errors import APIError
 from social.routes.friends import are_friends
 from social.schemas import (
+    ClassRequest,
     ErrorResponse,
     InviteResponse,
     LaunchRequest,
@@ -34,6 +35,7 @@ def party_response(party: parties.Party) -> PartyResponse:
         status=party.status,
         member_ids=party.member_ids,
         version=party.version,
+        classes=party.classes,
     )
 
 
@@ -133,6 +135,21 @@ async def kick(party_id: str, body: UserIdRequest, user_id: CurrentUserId) -> Re
     if body.user_id == user_id:
         raise APIError(400, "cannot_kick_self", "Leave the party instead.")
     raise_for(await parties.remove_member(party_id, body.user_id, required_leader=user_id))
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/parties/{party_id}/leader", status_code=status.HTTP_204_NO_CONTENT, responses=ERRORS)
+async def give_lead(party_id: str, body: UserIdRequest, user_id: CurrentUserId) -> Response:
+    """Leader only: make another member the leader."""
+    await party_of_member(party_id, user_id)
+    raise_for(await parties.set_leader(party_id, user_id, body.user_id))
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.put("/parties/{party_id}/class", status_code=status.HTTP_204_NO_CONTENT, responses=ERRORS)
+async def set_class(party_id: str, body: ClassRequest, user_id: CurrentUserId) -> Response:
+    """The class the caller plays, shown to the other members."""
+    raise_for(await parties.set_class(party_id, user_id, body.class_id))
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

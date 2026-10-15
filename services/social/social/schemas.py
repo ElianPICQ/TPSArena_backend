@@ -82,6 +82,11 @@ class PartyResponse(BaseModel):
     status: Literal["lobby", "launching", "in_match"]
     member_ids: list[uuid.UUID]
     version: int
+    classes: dict[uuid.UUID, str] = Field(description="Class each member plays, for members who sent it")
+
+
+class ClassRequest(BaseModel):
+    class_id: str = Field(min_length=1, max_length=32, pattern=r"^[a-z0-9_]+$")
 
 
 class InviteResponse(BaseModel):

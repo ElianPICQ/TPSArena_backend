@@ -139,6 +139,55 @@ async def test_kick(client):
     await create_party(client, b)
 
 
+async def test_give_lead(client):
+    leader, friend, stranger = new_player(), new_player(), new_player()
+    await befriend(client, leader, friend)
+    party_id = await create_party(client, leader)
+    await invite_and_join(client, party_id, leader, friend)
+
+    def give(to: Player, by: Player):
+        return client.post(f"/parties/{party_id}/leader", json={"user_id": str(to.user_id)}, headers=by.headers)
+
+    r = await give(friend, friend)
+    assert (r.status_code, r.json()["error"]) == (403, "not_leader")
+    r = await give(stranger, leader)
+    assert (r.status_code, r.json()["error"]) == (404, "not_member")
+
+    assert (await give(friend, leader)).status_code == 204
+    assert (await party(client, party_id, leader)).json()["leader_id"] == str(friend.user_id)
+    updated = (await events("party.updated"))[-1]
+    assert (updated.leader_id, updated.version) == (friend.user_id, 3)
+    # The old leader can't kick any more.
+    r = await client.post(f"/parties/{party_id}/kick", json={"user_id": str(friend.user_id)}, headers=leader.headers)
+    assert r.json()["error"] == "not_leader"
+
+
+async def test_member_classes(client):
+    leader, friend, stranger = new_player(), new_player(), new_player()
+    await befriend(client, leader, friend)
+    party_id = await create_party(client, leader)
+    await invite_and_join(client, party_id, leader, friend)
+
+    def set_class(p: Player, class_id: str):
+        return client.put(f"/parties/{party_id}/class", json={"class_id": class_id}, headers=p.headers)
+
+    assert (await party(client, party_id, leader)).json()["classes"] == {}
+    assert (await set_class(leader, "samurai")).status_code == 204
+    assert (await set_class(friend, "ninja")).status_code == 204
+    assert (await set_class(stranger, "ninja")).status_code == 404
+    assert (await set_class(leader, "Not A Class!")).status_code == 422
+    r = await party(client, party_id, friend)
+    assert r.json()["classes"] == {str(leader.user_id): "samurai", str(friend.user_id): "ninja"}
+    # Each change bumps the version so members reload the party; the same class again doesn't.
+    version = r.json()["version"]
+    await set_class(leader, "samurai")
+    assert (await party(client, party_id, leader)).json()["version"] == version
+
+    # A member who leaves takes their class with them.
+    await client.post(f"/parties/{party_id}/leave", headers=friend.headers)
+    assert (await party(client, party_id, leader)).json()["classes"] == {str(leader.user_id): "samurai"}
+
+
 def allocation_for(members: list[Player]) -> dict:
     return {
         "server_id": str(uuid.uuid4()),
