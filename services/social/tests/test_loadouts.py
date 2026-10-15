@@ -40,6 +40,16 @@ async def test_loadout_validation(client):
     assert await put([{**CLASS, "slot": i} for i in range(10)]) == 200
 
 
+async def test_assault_rifle_is_a_primary(client):
+    me = new_player()
+    rifle = {**CLASS, "name": "Assaut", "primary_weapon": "assault"}
+    r = await client.put("/loadouts/me", json={"loadouts": [rifle]}, headers=me.headers)
+    assert r.status_code == 200
+    assert r.json() == {"loadouts": [rifle]}
+    r = await client.put("/loadouts/me", json={"loadouts": [{**CLASS, "secondary_weapon": "assault"}]}, headers=me.headers)
+    assert r.status_code == 422
+
+
 async def test_loadouts_need_a_token(client):
     assert (await client.get("/loadouts/me")).status_code == 401
     assert (await client.put("/loadouts/me", json={"loadouts": []})).status_code == 401
