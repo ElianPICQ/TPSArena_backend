@@ -1,7 +1,8 @@
 # Real-time WebSocket protocol
 
-For the Godot client (`WebSocketPeer`). Connect to `ws://<host>:8005/ws`. Every message is a JSON
-object with a `type`.
+For the Godot client (`WebSocketPeer`). Connect to `ws://<host>:8005/ws`. The companion PWA
+connects through the site's nginx (`wss://<host>:8443/ws`) and says so in `auth` (`"client": "mobile"`).
+Every message is a JSON object with a `type`.
 
 ## Connecting
 1. Open the socket, then send within **5 seconds**:
@@ -13,12 +14,13 @@ object with a `type`.
    token expires without a new one is closed (4001).
 
 Closing the game: just close the socket. You are shown offline (and removed from your party) 30 s
-later, unless you reconnect in between.
+later, unless you reconnect in between. With the companion app still open, friends see you online
+with the `mobile` activity instead, and you are still removed from your party (the app can't play).
 
 ## Client → server
 | Message | Effect |
 |---|---|
-| `{"type": "auth", "token": "..."}` | First message; again after each token refresh. |
+| `{"type": "auth", "token": "...", "client": "mobile"}` | First message; again after each token refresh. `client` is optional: `"mobile"` for the companion app, the game sends nothing. Only the first `auth` sets it. |
 | `{"type": "heartbeat"}` | Every 20 s. |
 | `{"type": "friend_message", "to": "<user id>", "body": "...", "client_id": "..."}` | Message a friend (1–500 characters). `client_id` is optional, echoed in the ack. |
 | `{"type": "party_message", "party_id": "...", "body": "..."}` | Message your party (1–500 characters). |
@@ -30,7 +32,7 @@ Rate limit: 10 messages (friend + party) per 10 seconds per connection.
 | Message | When |
 |---|---|
 | `{"type": "hello", "user_id", "heartbeat_interval": 20, "friends": [presence...]}` | After a successful first `auth`. |
-| `{"type": "presence", "user_id", "status": "online"\|"offline", "activity": "menu"\|"in_match"\|null}` | A friend came online, went offline, started or left a match; also for a new friend. |
+| `{"type": "presence", "user_id", "status": "online"\|"offline", "activity": "menu"\|"in_match"\|"mobile"\|null}` | A friend came online, went offline, started or left a match, opened or closed the game while the companion app is open; also for a new friend. `mobile`: only the companion app is open (treat it as online, not in the game). |
 | `{"type": "friend_message", "message": {"id", "from_user_id", "to_user_id", "body", "created_at"}}` | A friend messaged you (live, or on connect if it was sent while you were offline). |
 | `{"type": "friend_message_sent", "client_id", "message": {...}}` | Your message was saved. |
 | `{"type": "party_message", "message": {"party_id", "from_user_id", "body", "sent_at"}}` | A party member (including you, from any device) posted. |
