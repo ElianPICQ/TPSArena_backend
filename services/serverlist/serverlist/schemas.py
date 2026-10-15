@@ -58,6 +58,9 @@ class HeartbeatResponse(BaseModel):
 
     status: ServerStatus
     party_id: str | None
+    leader_id: uuid.UUID | None = Field(
+        description="The party leader, who starts the match from the lobby, while the server is reserved or plays"
+    )
     reserved_slots: int
     match_settings: MatchSettings | None = Field(
         description="The party's settings for its match, while the server is reserved for it or plays it"
@@ -96,6 +99,7 @@ class VerifyTicketResponse(BaseModel):
 class AllocationRequest(BaseModel):
     party_id: str = Field(min_length=1, max_length=64)
     member_ids: list[uuid.UUID] = Field(min_length=1)
+    leader_id: uuid.UUID | None = Field(default=None, description="Starts the match from the game server's lobby")
     build_version: str = Field(min_length=1, max_length=64)
     region: str | None = None
     match_settings: MatchSettings = Field(default_factory=dict, max_length=16)

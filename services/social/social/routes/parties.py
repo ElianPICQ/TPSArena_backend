@@ -161,7 +161,7 @@ async def launch(party_id: str, body: LaunchRequest, user_id: CurrentUserId) -> 
 
     try:
         allocation = await clients.allocate_server(
-            party_id, party.member_ids, body.build_version, body.region, body.match_settings.model_dump()
+            party_id, party.member_ids, user_id, body.build_version, body.region, body.match_settings.model_dump()
         )
     except APIError:
         await parties.set_status(party_id, "launching", "lobby")

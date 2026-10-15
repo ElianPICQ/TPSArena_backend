@@ -95,7 +95,7 @@ async def test_register_heartbeat_deregister(client):
     server_id = await register(client)
     r = await heartbeat(client, server_id, "idle", players=0)
     assert r.status_code == 200
-    assert r.json() == {"status": "idle", "party_id": None, "reserved_slots": 0, "match_settings": None}
+    assert r.json() == {"status": "idle", "party_id": None, "leader_id": None, "reserved_slots": 0, "match_settings": None}
 
     r = await client.delete(f"/servers/{server_id}", headers=as_server(server_id))
     assert r.status_code == 204
@@ -235,6 +235,7 @@ async def test_allocation_reserves_server_with_one_ticket_per_member(client):
     assert r.json()["reserved_slots"] == 3
     assert r.json()["party_id"]
     assert r.json()["match_settings"] == {}
+    assert r.json()["leader_id"] is None
 
     # Reserved servers aren't in the public list and can't be allocated twice.
     await heartbeat(client, server_id, "idle")
@@ -250,6 +251,15 @@ async def test_allocation_hands_match_settings_to_the_server(client):
     assert (await heartbeat(client, server_id, "in_progress", players=1)).json()["match_settings"] == match_settings
     # Match over: the next party brings its own settings.
     assert (await heartbeat(client, server_id, "idle")).json()["match_settings"] is None
+
+
+async def test_allocation_hands_the_party_leader_to_the_server(client):
+    server_id = await register(client)
+    leader = uuid.uuid4()
+    await allocate(client, [leader, uuid.uuid4()], leader_id=str(leader))
+    assert (await heartbeat(client, server_id, "idle")).json()["leader_id"] == str(leader)
+    assert (await heartbeat(client, server_id, "in_progress", players=2)).json()["leader_id"] == str(leader)
+    assert (await heartbeat(client, server_id, "idle")).json()["leader_id"] is None
 
 
 async def test_allocation_without_idle_server(client):
@@ -280,13 +290,26 @@ async def test_reserved_server_returns_to_idle_after_reservation_window(client, 
     party_id = str(uuid.uuid4())
     await allocate(client, [uuid.uuid4()], party_id=party_id)
     r = await heartbeat(client, server_id, "idle")
-    assert r.json() == {"status": "idle", "party_id": None, "reserved_slots": 0, "match_settings": None}
+    assert r.json() == {"status": "idle", "party_id": None, "leader_id": None, "reserved_slots": 0, "match_settings": None}
     # The party won't play there: Social puts it back in the lobby.
     [event] = await server_events()
     assert isinstance(event, ReservationExpired)
     assert (str(event.server_id), event.party_id) == (server_id, party_id)
     await heartbeat(client, server_id, "idle")
     assert len(await server_events()) == 1
+
+
+async def test_reservation_holds_while_players_wait_in_the_lobby(client, monkeypatch):
+    monkeypatch.setattr(get_settings(), "reservation_seconds", 0)
+    server_id = await register(client)
+    await allocate(client, [uuid.uuid4()])
+    # The leader hasn't started yet: the window is over but a member is connected.
+    assert (await heartbeat(client, server_id, "idle", players=1)).json()["status"] == "reserved"
+    assert await server_events() == []
+    # Everybody left the lobby: the reservation ends.
+    assert (await heartbeat(client, server_id, "idle", players=0)).json()["status"] == "idle"
+    [event] = await server_events()
+    assert isinstance(event, ReservationExpired)
 
 
 async def test_idle_heartbeat_during_reservation_publishes_nothing(client):
@@ -313,7 +336,7 @@ async def test_party_flow_into_public_list(client):
 
     # Match over: back to idle, ready for the next party.
     r = await heartbeat(client, server_id, "idle", players=0)
-    assert r.json() == {"status": "idle", "party_id": None, "reserved_slots": 0, "match_settings": None}
+    assert r.json() == {"status": "idle", "party_id": None, "leader_id": None, "reserved_slots": 0, "match_settings": None}
 
 
 # --- Join tickets and verification ---

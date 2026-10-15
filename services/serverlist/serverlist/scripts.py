@@ -20,11 +20,12 @@ local current = redis.call('HGET', KEYS[1], 'status')
 local new = ARGV[3]
 
 -- The server learns it was reserved from this heartbeat's answer, so an "idle" sent before
--- then must not cancel the reservation. After the reservation window it may go back to idle,
+-- then must not cancel the reservation. Nor does it while players wait in the lobby for the
+-- leader to start. After the reservation window, with nobody connected, it goes back to idle
 -- and the party is told it won't play there (server.reservation_expired).
 if current == 'reserved' and new == 'idle' then
   local s = redis.call('HMGET', KEYS[1], 'reserved_until', 'party_id')
-  if now < tonumber(s[1]) then
+  if now < tonumber(s[1]) or tonumber(ARGV[4]) > 0 then
     new = 'reserved'
   elseif s[2] then
     local data = cjson.encode({server_id = ARGV[6], party_id = s[2]})
@@ -34,7 +35,7 @@ if current == 'reserved' and new == 'idle' then
 end
 
 if new == 'idle' then
-  redis.call('HDEL', KEYS[1], 'party_id', 'reserved_until', 'started_at', 'match_settings')
+  redis.call('HDEL', KEYS[1], 'party_id', 'reserved_until', 'started_at', 'match_settings', 'leader_id')
   redis.call('DEL', KEYS[2], KEYS[5])
 elseif new == 'in_progress' and current ~= 'in_progress' then
   redis.call('HSET', KEYS[1], 'started_at', now)
@@ -87,7 +88,7 @@ return 1
 
 # KEYS: server hash, server tickets zset, one ticket key per member, then the server party key
 # ARGV: now_ms, ticket_ttl_ms, party_id, reserved_until_ms, build_version, match_settings_json,
-#       then (ticket_id, ticket_json) per member
+#       leader_id ('' = none), then (ticket_id, ticket_json) per member
 # Returns 1 if the server was reserved, 0 if it wasn't available any more.
 ALLOCATE = redis.register_script("""
 local s = redis.call('HMGET', KEYS[1], 'status', 'build_version', 'max_players')
@@ -98,10 +99,11 @@ local now = tonumber(ARGV[1])
 local ttl = tonumber(ARGV[2])
 redis.call('HSET', KEYS[1], 'status', 'reserved', 'party_id', ARGV[3], 'reserved_until', ARGV[4],
   'match_settings', ARGV[6])
+if ARGV[7] ~= '' then redis.call('HSET', KEYS[1], 'leader_id', ARGV[7]) end
 redis.call('DEL', KEYS[2])
 for i = 1, members do
-  redis.call('ZADD', KEYS[2], now + ttl, ARGV[5 + 2 * i])
-  redis.call('SET', KEYS[2 + i], ARGV[6 + 2 * i], 'PX', ttl)
+  redis.call('ZADD', KEYS[2], now + ttl, ARGV[6 + 2 * i])
+  redis.call('SET', KEYS[2 + i], ARGV[7 + 2 * i], 'PX', ttl)
 end
 redis.call('PEXPIRE', KEYS[2], ttl)
 redis.call('SET', KEYS[#KEYS], ARGV[3], 'EX', 86400)

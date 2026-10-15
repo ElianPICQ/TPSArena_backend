@@ -149,6 +149,7 @@ async def heartbeat(server_id: uuid.UUID, body: HeartbeatRequest, credentials: C
     return HeartbeatResponse(
         status=server["status"],
         party_id=server.get("party_id"),
+        leader_id=server.get("leader_id"),
         reserved_slots=int(server["reserved_slots"]),
         match_settings=json.loads(server["match_settings"]) if "match_settings" in server else None,
     )
@@ -300,6 +301,7 @@ async def allocate_server(body: AllocationRequest) -> AllocationResponse:
             now + settings.reservation_seconds * 1000,
             body.build_version,
             json.dumps(body.match_settings),
+            str(body.leader_id or ""),
         ]
         for user_id, ticket in tickets.items():
             args += [ticket, json.dumps({"user_id": str(user_id), "server_id": sid})]

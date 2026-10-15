@@ -50,13 +50,20 @@ async def user_exists(user_id: uuid.UUID, authorization: str) -> bool:
 
 
 async def allocate_server(
-    party_id: str, member_ids: list[uuid.UUID], build_version: str, region: str | None, match_settings: dict
+    party_id: str,
+    member_ids: list[uuid.UUID],
+    leader_id: uuid.UUID,
+    build_version: str,
+    region: str | None,
+    match_settings: dict,
 ) -> dict:
-    """Reserve a game server for the party, which gets `match_settings` with the reservation.
-    Returns the Server List allocation (address, port, tickets)."""
+    """Reserve a game server for the party, which gets `match_settings` and the leader (who starts
+    the match from the lobby) with the reservation. Returns the Server List allocation (address,
+    port, tickets)."""
     body = {
         "party_id": party_id,
         "member_ids": [str(m) for m in member_ids],
+        "leader_id": str(leader_id),
         "build_version": build_version,
         "region": region,
         "match_settings": match_settings,

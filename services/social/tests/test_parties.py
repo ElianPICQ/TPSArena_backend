@@ -221,6 +221,8 @@ async def test_launch(client, mocked):
     assert sent.headers["authorization"] == "Bearer change-me-dev-social-service-secret"
     # Default settings when the leader sends none.
     assert json.loads(sent.content)["match_settings"] == {"bots": 2, "duration_seconds": 180}
+    # The leader starts the match from the game server's lobby.
+    assert json.loads(sent.content)["leader_id"] == str(leader.user_id)
 
     assert (await party(client, party_id, leader)).json()["status"] == "in_match"
     ready = await events("party.match_ready")
