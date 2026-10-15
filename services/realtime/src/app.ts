@@ -63,7 +63,7 @@ export function createApp(config: Config, options: { keys?: JWTVerifyGetKey } = 
   /** Users whose instance died never close their sockets: mark them offline after the TTL. */
   async function sweep(): Promise<void> {
     for (const userId of await presence.staleUsers()) {
-      if (await presence.checkOffline(userId)) await announcer.offline(userId);
+      await announcer.checked(userId, await presence.checkOffline(userId));
     }
   }
 

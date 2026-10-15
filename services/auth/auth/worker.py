@@ -21,14 +21,14 @@ log = logging.getLogger("auth.worker")
 
 # The players' language is French (the game's UI is in French).
 SUBJECTS = {
-    "verify": "Ton code de vérification Arena TPS",
-    "reset": "Ton code pour changer de mot de passe Arena TPS",
+    "verify": "Ton code de vérification TPS Arena",
+    "reset": "Ton code pour changer de mot de passe TPS Arena",
 }
 BODIES = {
     "verify": "Bonjour {username},\n\n"
     "Ton code de vérification est : {code}\n"
     "Saisis-le dans le jeu pour activer ton compte. Il expire dans {ttl} minutes.\n\n"
-    "Si tu n'as pas créé de compte Arena TPS, tu peux ignorer cet e-mail.\n",
+    "Si tu n'as pas créé de compte TPS Arena, tu peux ignorer cet e-mail.\n",
     "reset": "Bonjour {username},\n\n"
     "Ton code pour choisir un nouveau mot de passe est : {code}\n"
     "Il expire dans {ttl} minutes.\n\n"

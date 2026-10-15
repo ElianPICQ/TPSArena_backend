@@ -124,6 +124,38 @@ describe("presence", () => {
     await a.nothing((m) => m.type === "presence", 600);
   });
 
+  it("the companion app shows as mobile, and only the game counts for Social", async () => {
+    const instance = await startInstance();
+    const [alice, bob] = [newId(), newId()];
+    befriend(alice, bob);
+    const a = await Client.login(instance, alice);
+    const start = (await redis.xrevrange("presence.changed", "+", "-", "COUNT", 1))[0]?.[0] ?? "0";
+    const changes = async () =>
+      (await streamEvents(redis, "presence.changed", start)).filter((e) => e.data.user_id === bob).map((e) => e.data.status);
+    const presence = (m: Record<string, unknown>) => m.type === "presence" && m.user_id === bob;
+
+    // Phone first: online for friends, nothing for Social.
+    const phone = await Client.open(instance);
+    phone.send({ type: "auth", token: await token(bob), client: "mobile" });
+    await phone.next((m) => m.type === "hello");
+    expect(await a.next(presence)).toMatchObject({ status: "online", activity: "mobile" });
+    expect(await changes()).toEqual([]);
+
+    // The game opens: in the menu, and Social learns it.
+    const game = await Client.login(instance, bob);
+    expect(await a.next(presence)).toMatchObject({ status: "online", activity: "menu" });
+    expect(await changes()).toEqual(["online"]);
+
+    // The game closes: back to mobile; Social sees the player leave (removed from their party).
+    game.close();
+    expect(await a.next(presence)).toMatchObject({ status: "online", activity: "mobile" });
+    expect(await changes()).toEqual(["online", "offline"]);
+
+    // The phone closes too: offline.
+    phone.close();
+    expect(await a.next(presence)).toMatchObject({ status: "offline", activity: null });
+  });
+
   it("the sweeper marks users of a crashed instance offline", async () => {
     const instance = await startInstance();
     const ghost = newId();

@@ -6,7 +6,7 @@ import type { FriendMessages, PartyChat } from "./chat.js";
 import type { Config } from "./config.js";
 import { TokenError, type Verifier } from "./jwt.js";
 import { log } from "./log.js";
-import type { Presence } from "./presence.js";
+import type { ClientKind, Presence } from "./presence.js";
 import { CloseCode, type ServerMessage } from "./protocol.js";
 import { issuedBefore, type Revocations } from "./revocations.js";
 import { fetchFriends, SocialUnavailable } from "./social.js";
@@ -26,6 +26,7 @@ export interface HubDeps {
 
 export class Connection {
   userId: string | null = null;
+  kind: ClientKind = "game";
   token = "";
   expiresAt = 0;
   issuedAt = 0;
@@ -118,7 +119,7 @@ export class Hub {
     try {
       switch (message.type) {
         case "auth":
-          return await this.authenticate(conn, String(message.token ?? ""));
+          return await this.authenticate(conn, String(message.token ?? ""), message.client);
         case "heartbeat":
           return await this.heartbeat(conn);
         case "friend_message":
@@ -136,7 +137,8 @@ export class Hub {
     }
   }
 
-  private async authenticate(conn: Connection, token: string): Promise<void> {
+  /** `client`: "mobile" for the companion app; anything else (or nothing) is the game. Set on the first auth only. */
+  private async authenticate(conn: Connection, token: string, client?: unknown): Promise<void> {
     const { verify, config, presence, friendMessages, announcer, revocations } = this.deps;
     let verified;
     try {
@@ -180,20 +182,21 @@ export class Hub {
     if (conn.ws.readyState !== WebSocket.OPEN) return; // closed while we were asking Social
 
     conn.userId = verified.userId;
+    conn.kind = client === "mobile" ? "mobile" : "game";
     conn.token = token;
     conn.expiresAt = verified.expiresAt;
     conn.issuedAt = verified.issuedAt;
     addTo(this.byUser, conn.userId, conn);
     for (const friend of friends) this.addFriend(conn, friend);
 
-    const cameOnline = await presence.touch(conn.userId, conn.id);
+    const change = await presence.touch(conn.userId, conn.id, conn.kind);
     conn.send({
       type: "hello",
       user_id: conn.userId,
       heartbeat_interval: config.heartbeatIntervalSeconds,
       friends: await presence.get(friends),
     });
-    if (cameOnline) await announcer.online(conn.userId);
+    await announcer.touched(conn.userId, change);
 
     // Messages sent while the player was offline.
     const waiting = await friendMessages.undelivered(conn.userId);
@@ -202,7 +205,8 @@ export class Hub {
   }
 
   private async heartbeat(conn: Connection): Promise<void> {
-    if (await this.deps.presence.touch(conn.userId!, conn.id)) await this.deps.announcer.online(conn.userId!);
+    const change = await this.deps.presence.touch(conn.userId!, conn.id, conn.kind);
+    await this.deps.announcer.touched(conn.userId!, change);
   }
 
   private checkBody(conn: Connection, body: unknown): string | null {
@@ -260,12 +264,13 @@ export class Hub {
     removeFrom(this.byUser, userId, conn);
     for (const friend of conn.friends) removeFrom(this.byFriend, friend, conn);
     await this.deps.presence.dropConnection(userId, conn.id);
-    // Offline only if no other socket (here or on another instance) shows up within the grace period.
+    // Offline (or game closed) only if no other socket (here or on another instance) shows up
+    // within the grace period.
     const timer = setTimeout(() => {
       this.offlineTimers.delete(timer);
       void this.deps.presence
         .checkOffline(userId)
-        .then((wentOffline) => (wentOffline ? this.deps.announcer.offline(userId) : undefined))
+        .then((change) => this.deps.announcer.checked(userId, change))
         .catch((error) => log("error", "offline check failed", { userId, error: String(error) }));
     }, this.deps.config.offlineGraceSeconds * 1000);
     this.offlineTimers.add(timer);

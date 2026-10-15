@@ -10,7 +10,7 @@ TPSArena: a third-person free-for-all multiplayer shooter. The client and dedica
 - **`TODO.md`** lists known gaps and deferred design issues. Remove an item when it is done, and add new gaps there instead of leaving them only in code comments.
 - **`README.md`** is the human-facing overview (services, running the stack, status). Keep its status section in line with `TODO.md`.
 
-Every backend service in the spec is implemented: `services/{auth,serverlist,social,stats,bff,realtime}` and the shared package `libs/common`. The Godot client is a separate repo, checked out at `../TPSArena_Jeu/client/`. The dedicated game server is the same Godot project (exported builds go to `../TPSArena_Jeu/server/`). It registers with the Server List and sends its events (`player.match`, `match.finished`) through `POST /servers/{id}/player-match` and `/match-finished`, which publish them. The client talks to the BFF and to Real-time.
+Every backend service in the spec is implemented: `services/{auth,serverlist,social,stats,bff,web-bff,realtime}` and the shared package `libs/common`. The Godot client is a separate repo, checked out at `../TPSArena_Jeu/client/`. The dedicated game server is the same Godot project (exported builds go to `../TPSArena_Jeu/server/`). It registers with the Server List and sends its events (`player.match`, `match.finished`) through `POST /servers/{id}/player-match` and `/match-finished`, which publish them. The client talks to the BFF and to Real-time.
 
 Development happens on both Debian and Windows 11 (Docker Desktop + WSL 2). Keep LF line endings (`.gitattributes`), avoid OS-specific paths, and write helper scripts in Python (see `scripts/`).
 
@@ -24,6 +24,7 @@ Development happens on both Debian and Windows 11 (Docker Desktop + WSL 2). Keep
 | `services/stats` | Match results, history, progression, leaderboards (FastAPI) + worker | 8004 |
 | `services/realtime` | WebSocket service: presence, chat, pushes (TypeScript, Node 24+). Client protocol: `PROTOCOL.md` | 8005 |
 | `services/bff` | Client entry point (FastAPI): forwards to the services and merges usernames | 8000 |
+| `services/web-bff` | Entry point of the companion PWA served by `../TPSArena_Site` under `/app/` (FastAPI): Auth, Stats, Social friends, Real-time presence/history; refresh token in an HttpOnly cookie | 8006 (loopback) |
 | `libs/common` | `tpsarena_common`: JWT/JWKS verification, event models, stream consumer, outbox, JSON Schema export | — |
 | `infra/` | Shared Redis with one ACL user per service (`infra/redis/start.sh`), full-stack compose overrides | 6379 |
 
@@ -61,7 +62,7 @@ docker compose up -d --build                               # full stack
 python scripts/release_common.py X.Y.Z [--dry-run]         # release libs/common (clean tree, runs its tests, tags, pushes)
 ```
 
-- **Ports:** only the BFF (8000), the Server List (8002, game servers) and Real-time (8005, WebSocket) are meant for outside callers; the other published ports are for development. Mailpit inbox: http://localhost:8025.
+- **Ports:** only the BFF (8000), the Server List (8002, game servers) and Real-time (8005, WebSocket) are meant for outside callers; the other published ports are for development. The Web BFF (8006) is published on `127.0.0.1` only: players reach it through the site's nginx over the shared Docker network `tpsarena-web`, which Real-time also joins (`infra/fullstack/realtime.yaml`) so the site can relay the PWA's WebSocket (`/ws`). Mailpit inbox: http://localhost:8025.
 - **Redis ACL changes:** after changing `infra/redis/start.sh` or its passwords, run `docker compose restart redis`. The ACL file is written only at container start.
 
 ## Shared package and event contract
@@ -92,12 +93,14 @@ python scripts/release_common.py X.Y.Z [--dry-run]         # release libs/common
     - An event about a PostgreSQL change goes through the service's **outbox**: `await outbox.add(session, event)` before the commit, then `await outbox.try_flush()` after it. Workers publish whatever is left.
     - An event about Redis-only state is added by the same Lua script or `MULTI` that makes the change, so the two can't be separated. This applies to Server List events and Social party events and invites. The script builds the `data` JSON itself, so the tests decode those events with the shared models.
   - The two TypeScript twins must keep behaving like the Python originals: `jwt.ts` (same error codes) and `streams.ts`.
+- **Presence kinds (Real-time):** a socket is `game` (default) or `mobile` (`"client": "mobile"` in the first `auth`, the companion PWA). Friends see any socket as online, with activity `mobile` when no game socket is open. `presence.changed` (Social removes offline players from parties) follows game sockets: `realtime:presence:in_game` and `realtime:presence:{id}:game` beside `last_seen` and `:conns`; `touch`/`checkOffline` return `{online, game}` and `Announcer.touched`/`checked` decide what to publish.
 - **Errors:** services raise `APIError(status, error_code, message)`, which is rendered as `{"error": ..., "message": ...}`. The game client branches on the `error` codes, so they are API contract. The same goes for WebSocket close codes and reasons (see `PROTOCOL.md`).
 - **BFF:**
   - It keeps one `httpx.AsyncClient` per upstream on `app.state` and forwards bodies and status codes unchanged, because the upstream owns validation.
   - It sets `X-Forwarded-For`, which Auth trusts for per-IP rate limits. That is safe only because Auth isn't exposed.
   - Upstream down → `503`, non-JSON reply → `502`.
   - It adds usernames to Social and Stats responses with one batch lookup (`bff/names.py`).
+- **Web BFF:** same forwarding rules as the BFF (`upstream.py` and `names.py` are copies: keep them in step), but only what the PWA uses: Auth (login, user search), Stats, Social's friend routes, Real-time's presence and history. No parties or servers. It turns Auth's tokens into a session for a browser: the refresh token goes in the `tpsarena_refresh` cookie (`HttpOnly`, `Secure`, `SameSite=Strict`, `Path=/api/auth`), the access token and the user in the body. It trusts `X-Forwarded-For` (uvicorn `--proxy-headers`) because only the site's nginx, which overwrites the header, can reach its port.
 - **Auth security choices:**
   - JWTs are EdDSA (Ed25519) with a `kid`, `sub` = user UUID, and a 15-minute lifetime. Other services verify them through Auth's JWKS.
   - Refresh tokens are stored hashed and rotated. Only a *rotated* token used again counts as theft and revokes every session.

@@ -1,6 +1,15 @@
-# Full stack only: realtime also waits for the shared Redis (infra/compose.yaml).
+# Full stack only: realtime also waits for the shared Redis (infra/compose.yaml), and joins the
+# network shared with TPSArena_Site, whose nginx relays the companion app's WebSocket (/ws) here.
 services:
   realtime:
     depends_on:
       redis:
         condition: service_healthy
+    networks:
+      default:
+      web:
+        aliases: [realtime]
+
+networks:
+  web:
+    name: tpsarena-web
