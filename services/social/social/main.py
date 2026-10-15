@@ -8,7 +8,7 @@ from social import clients
 from social.db import engine
 from social.errors import APIError, api_error_handler
 from social.redis_client import redis
-from social.routes import friends, parties, profiles
+from social.routes import friends, loadouts, parties, profiles
 
 
 @asynccontextmanager
@@ -23,6 +23,7 @@ app = FastAPI(title="TPSArena Social API", lifespan=lifespan)
 app.add_exception_handler(APIError, api_error_handler)
 app.add_exception_handler(TokenError, token_error_handler)
 app.include_router(profiles.router)
+app.include_router(loadouts.router)
 app.include_router(friends.router)
 app.include_router(parties.router)
 

@@ -42,6 +42,57 @@ class ProfileUpdate(BaseModel):
         return v
 
 
+# --- Loadouts (saved classes) ---
+
+
+class LoadoutItem(BaseModel):
+    slot: int = Field(ge=0, le=9)
+    name: str
+    primary_weapon: str
+    secondary_weapon: str
+
+    @field_validator("name")
+    @classmethod
+    def name_length(cls, v: str) -> str:
+        v = v.strip()
+        if not v or len(v) > get_settings().loadout_name_max_length:
+            raise ValueError(f"name must be 1 to {get_settings().loadout_name_max_length} characters")
+        return v
+
+    @field_validator("primary_weapon")
+    @classmethod
+    def known_primary(cls, v: str) -> str:
+        if v not in get_settings().primary_weapons:
+            raise ValueError(f"primary_weapon must be one of {get_settings().primary_weapons}")
+        return v
+
+    @field_validator("secondary_weapon")
+    @classmethod
+    def known_secondary(cls, v: str) -> str:
+        if v not in get_settings().secondary_weapons:
+            raise ValueError(f"secondary_weapon must be one of {get_settings().secondary_weapons}")
+        return v
+
+
+class LoadoutsUpdate(BaseModel):
+    """The whole list: it replaces every saved class of the player."""
+
+    loadouts: list[LoadoutItem]
+
+    @field_validator("loadouts")
+    @classmethod
+    def at_most_max_with_unique_slots(cls, v: list[LoadoutItem]) -> list[LoadoutItem]:
+        if len(v) > get_settings().max_loadouts:
+            raise ValueError(f"at most {get_settings().max_loadouts} loadouts")
+        if len({item.slot for item in v}) != len(v):
+            raise ValueError("slots must be unique")
+        return v
+
+
+class LoadoutsResponse(BaseModel):
+    loadouts: list[LoadoutItem]
+
+
 # --- Friends ---
 
 

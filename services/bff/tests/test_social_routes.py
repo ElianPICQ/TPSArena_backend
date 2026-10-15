@@ -129,6 +129,8 @@ async def test_party_answers_get_member_names(client, method, path, upstream_pat
     ("method", "path"),
     [
         ("PATCH", "/profiles/me"),
+        ("GET", "/loadouts/me"),
+        ("PUT", "/loadouts/me"),
         ("POST", "/friends/requests"),
         ("POST", "/friends/requests/{id}/accept"),
         ("POST", "/friends/requests/{id}/decline"),
