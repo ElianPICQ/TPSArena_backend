@@ -34,7 +34,7 @@ if current == 'reserved' and new == 'idle' then
 end
 
 if new == 'idle' then
-  redis.call('HDEL', KEYS[1], 'party_id', 'reserved_until', 'started_at')
+  redis.call('HDEL', KEYS[1], 'party_id', 'reserved_until', 'started_at', 'match_settings')
   redis.call('DEL', KEYS[2], KEYS[5])
 elseif new == 'in_progress' and current ~= 'in_progress' then
   redis.call('HSET', KEYS[1], 'started_at', now)
@@ -86,7 +86,8 @@ return 1
 """)
 
 # KEYS: server hash, server tickets zset, one ticket key per member, then the server party key
-# ARGV: now_ms, ticket_ttl_ms, party_id, reserved_until_ms, build_version, then (ticket_id, ticket_json) per member
+# ARGV: now_ms, ticket_ttl_ms, party_id, reserved_until_ms, build_version, match_settings_json,
+#       then (ticket_id, ticket_json) per member
 # Returns 1 if the server was reserved, 0 if it wasn't available any more.
 ALLOCATE = redis.register_script("""
 local s = redis.call('HMGET', KEYS[1], 'status', 'build_version', 'max_players')
@@ -95,11 +96,12 @@ local members = #KEYS - 3
 if members > tonumber(s[3]) then return 0 end
 local now = tonumber(ARGV[1])
 local ttl = tonumber(ARGV[2])
-redis.call('HSET', KEYS[1], 'status', 'reserved', 'party_id', ARGV[3], 'reserved_until', ARGV[4])
+redis.call('HSET', KEYS[1], 'status', 'reserved', 'party_id', ARGV[3], 'reserved_until', ARGV[4],
+  'match_settings', ARGV[6])
 redis.call('DEL', KEYS[2])
 for i = 1, members do
-  redis.call('ZADD', KEYS[2], now + ttl, ARGV[4 + 2 * i])
-  redis.call('SET', KEYS[2 + i], ARGV[5 + 2 * i], 'PX', ttl)
+  redis.call('ZADD', KEYS[2], now + ttl, ARGV[5 + 2 * i])
+  redis.call('SET', KEYS[2 + i], ARGV[6 + 2 * i], 'PX', ttl)
 end
 redis.call('PEXPIRE', KEYS[2], ttl)
 redis.call('SET', KEYS[#KEYS], ARGV[3], 'EX', 86400)

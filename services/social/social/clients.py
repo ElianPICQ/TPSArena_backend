@@ -49,13 +49,17 @@ async def user_exists(user_id: uuid.UUID, authorization: str) -> bool:
     return any(u["user_id"] == str(user_id) for u in response.json()["users"])
 
 
-async def allocate_server(party_id: str, member_ids: list[uuid.UUID], build_version: str, region: str | None) -> dict:
-    """Reserve a game server for the party. Returns the Server List allocation (address, port, tickets)."""
+async def allocate_server(
+    party_id: str, member_ids: list[uuid.UUID], build_version: str, region: str | None, match_settings: dict
+) -> dict:
+    """Reserve a game server for the party, which gets `match_settings` with the reservation.
+    Returns the Server List allocation (address, port, tickets)."""
     body = {
         "party_id": party_id,
         "member_ids": [str(m) for m in member_ids],
         "build_version": build_version,
         "region": region,
+        "match_settings": match_settings,
     }
     try:
         response = await serverlist_client().post("/allocations", json=body)

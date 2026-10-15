@@ -9,6 +9,11 @@ from tpsarena_common.events import MatchPlayerResult
 from serverlist.config import get_settings
 
 
+# The match settings a party leader chose (bots, duration, later map and mode). Social validates
+# them; the Server List only hands them to the reserved game server, so it doesn't list the keys.
+MatchSettings = dict[str, str | int | float | bool]
+
+
 class ServerStatus(StrEnum):
     idle = "idle"
     reserved = "reserved"
@@ -54,6 +59,9 @@ class HeartbeatResponse(BaseModel):
     status: ServerStatus
     party_id: str | None
     reserved_slots: int
+    match_settings: MatchSettings | None = Field(
+        description="The party's settings for its match, while the server is reserved for it or plays it"
+    )
 
 
 class PublicServer(BaseModel):
@@ -90,6 +98,7 @@ class AllocationRequest(BaseModel):
     member_ids: list[uuid.UUID] = Field(min_length=1)
     build_version: str = Field(min_length=1, max_length=64)
     region: str | None = None
+    match_settings: MatchSettings = Field(default_factory=dict, max_length=16)
 
 
 class AllocationResponse(BaseModel):

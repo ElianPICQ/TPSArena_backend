@@ -150,6 +150,7 @@ async def heartbeat(server_id: uuid.UUID, body: HeartbeatRequest, credentials: C
         status=server["status"],
         party_id=server.get("party_id"),
         reserved_slots=int(server["reserved_slots"]),
+        match_settings=json.loads(server["match_settings"]) if "match_settings" in server else None,
     )
 
 
@@ -292,7 +293,14 @@ async def allocate_server(body: AllocationRequest) -> AllocationResponse:
         sid = server["server_id"]
         tickets = {user_id: new_ticket_id() for user_id in member_ids}
         now = now_ms()
-        args: list = [now, ttl_ms, body.party_id, now + settings.reservation_seconds * 1000, body.build_version]
+        args: list = [
+            now,
+            ttl_ms,
+            body.party_id,
+            now + settings.reservation_seconds * 1000,
+            body.build_version,
+            json.dumps(body.match_settings),
+        ]
         for user_id, ticket in tickets.items():
             args += [ticket, json.dumps({"user_id": str(user_id), "server_id": sid})]
         # Another allocation may take the same server first: then try the next one.

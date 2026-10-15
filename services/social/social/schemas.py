@@ -89,9 +89,17 @@ class InviteResponse(BaseModel):
     expires_at: datetime
 
 
+class MatchSettings(BaseModel):
+    """The leader's choices for the match, applied by the game server. Map and mode will come later."""
+
+    bots: int = Field(default=2, ge=0, le=7, description="Bots added to the match (only into free slots)")
+    duration_seconds: int = Field(default=180, ge=60, le=600)
+
+
 class LaunchRequest(BaseModel):
     build_version: str = Field(min_length=1, max_length=64)
     region: str | None = None
+    match_settings: MatchSettings = Field(default_factory=MatchSettings)
 
 
 class LaunchResponse(BaseModel):

@@ -95,7 +95,7 @@ async def test_register_heartbeat_deregister(client):
     server_id = await register(client)
     r = await heartbeat(client, server_id, "idle", players=0)
     assert r.status_code == 200
-    assert r.json() == {"status": "idle", "party_id": None, "reserved_slots": 0}
+    assert r.json() == {"status": "idle", "party_id": None, "reserved_slots": 0, "match_settings": None}
 
     r = await client.delete(f"/servers/{server_id}", headers=as_server(server_id))
     assert r.status_code == 204
@@ -234,11 +234,22 @@ async def test_allocation_reserves_server_with_one_ticket_per_member(client):
     assert r.json()["status"] == "reserved"
     assert r.json()["reserved_slots"] == 3
     assert r.json()["party_id"]
+    assert r.json()["match_settings"] == {}
 
     # Reserved servers aren't in the public list and can't be allocated twice.
     await heartbeat(client, server_id, "idle")
     assert await list_servers(client) == []
     assert (await allocate(client, [uuid.uuid4()])).status_code == 503
+
+
+async def test_allocation_hands_match_settings_to_the_server(client):
+    server_id = await register(client)
+    match_settings = {"bots": 3, "duration_seconds": 300}
+    await allocate(client, [uuid.uuid4()], match_settings=match_settings)
+    assert (await heartbeat(client, server_id, "idle")).json()["match_settings"] == match_settings
+    assert (await heartbeat(client, server_id, "in_progress", players=1)).json()["match_settings"] == match_settings
+    # Match over: the next party brings its own settings.
+    assert (await heartbeat(client, server_id, "idle")).json()["match_settings"] is None
 
 
 async def test_allocation_without_idle_server(client):
@@ -269,7 +280,7 @@ async def test_reserved_server_returns_to_idle_after_reservation_window(client, 
     party_id = str(uuid.uuid4())
     await allocate(client, [uuid.uuid4()], party_id=party_id)
     r = await heartbeat(client, server_id, "idle")
-    assert r.json() == {"status": "idle", "party_id": None, "reserved_slots": 0}
+    assert r.json() == {"status": "idle", "party_id": None, "reserved_slots": 0, "match_settings": None}
     # The party won't play there: Social puts it back in the lobby.
     [event] = await server_events()
     assert isinstance(event, ReservationExpired)
@@ -302,7 +313,7 @@ async def test_party_flow_into_public_list(client):
 
     # Match over: back to idle, ready for the next party.
     r = await heartbeat(client, server_id, "idle", players=0)
-    assert r.json() == {"status": "idle", "party_id": None, "reserved_slots": 0}
+    assert r.json() == {"status": "idle", "party_id": None, "reserved_slots": 0, "match_settings": None}
 
 
 # --- Join tickets and verification ---

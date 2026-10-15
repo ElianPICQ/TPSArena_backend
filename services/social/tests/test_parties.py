@@ -1,3 +1,4 @@
+import json
 import uuid
 
 import httpx
@@ -169,6 +170,8 @@ async def test_launch(client, mocked):
     }
     sent = route.calls.last.request
     assert sent.headers["authorization"] == "Bearer change-me-dev-social-service-secret"
+    # Default settings when the leader sends none.
+    assert json.loads(sent.content)["match_settings"] == {"bots": 2, "duration_seconds": 180}
 
     assert (await party(client, party_id, leader)).json()["status"] == "in_match"
     ready = await events("party.match_ready")
@@ -182,6 +185,23 @@ async def test_launch(client, mocked):
     assert r.json()["error"] == "not_in_lobby"
     r = await client.post(f"/parties/{party_id}/launch", json={"build_version": "0.1.0"}, headers=leader.headers)
     assert r.json()["error"] == "not_in_lobby"
+
+
+async def test_launch_passes_match_settings_to_the_server_list(client, mocked):
+    leader = new_player()
+    party_id = await create_party(client, leader)
+    route = mocked.post("http://serverlist.test/allocations").mock(
+        return_value=httpx.Response(201, json=allocation_for([leader]))
+    )
+    body = {"build_version": "0.1.0", "match_settings": {"bots": 8, "duration_seconds": 300}}
+    r = await client.post(f"/parties/{party_id}/launch", json=body, headers=leader.headers)
+    assert r.status_code == 422
+    assert not route.called
+
+    body["match_settings"]["bots"] = 0
+    r = await client.post(f"/parties/{party_id}/launch", json=body, headers=leader.headers)
+    assert r.status_code == 200
+    assert json.loads(route.calls.last.request.content)["match_settings"] == {"bots": 0, "duration_seconds": 300}
 
 
 async def test_launch_without_server_goes_back_to_lobby(client, mocked):
