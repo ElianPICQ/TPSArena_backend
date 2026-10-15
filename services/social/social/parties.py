@@ -1,7 +1,7 @@
 """Parties and invites, stored in Redis:
 
     social:party:{party_id}            hash    leader_id, status (lobby | launching | in_match), version, created_at, server_id
-    social:party:{party_id}:members    set     up to 8 user ids
+    social:party:{party_id}:members    set     up to 16 user ids
     social:party:{party_id}:classes    hash    user_id -> class each member plays (shown in the party lobby)
     social:user:{user_id}:party        string  party_id (one party per player)
     social:invite:{invite_id}          hash    party_id, from, to   (TTL 60 s)

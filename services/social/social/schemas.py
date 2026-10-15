@@ -148,7 +148,7 @@ class InviteResponse(BaseModel):
 class MatchSettings(BaseModel):
     """The leader's choices for the match, applied by the game server. Map and mode will come later."""
 
-    bots: int = Field(default=2, ge=0, le=7, description="Bots added to the match (only into free slots)")
+    bots: int = Field(default=2, ge=0, le=15, description="Bots added to the match (only into free slots)")
     duration_seconds: int = Field(default=180, ge=60, le=600)
 
 

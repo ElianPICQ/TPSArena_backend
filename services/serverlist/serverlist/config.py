@@ -30,7 +30,7 @@ class Settings(BaseSettings):
     ticket_ttl_seconds: int = 30
     # How long a reserved server waits for the party before it may go back to idle.
     reservation_seconds: int = 35
-    max_players: int = 8
+    max_players: int = 16
 
     events_stream_maxlen: int = 100_000
 

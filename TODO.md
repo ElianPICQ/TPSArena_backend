@@ -7,8 +7,8 @@ Server List). Points to keep in mind:
 - **Deregistration on Ctrl+C.** A killed server doesn't send `DELETE /servers/{id}`; the sweeper
   removes it after 15 s. A reservation made in those 15 s fails for the party (`server.removed`
   puts it back in the lobby).
-- **`max_players`: already enforced** by the game server: it refuses a new player when 8 are
-  already connected, even with a valid ticket. Keep it that way: the Server List's player count
+- **`max_players`: already enforced** by the game server: it refuses a new player when its
+  `max_players` (16) are already connected, even with a valid ticket. Keep it that way: the Server List's player count
   can be off by one for up to a heartbeat (5 s), because a heartbeat sent just before the player
   connected overwrites the count with the old number.
 - **Keep the server token.** `POST /servers` (shared `GAME_SERVER_SECRET`) returns a

@@ -35,7 +35,7 @@ class Settings(BaseSettings):
     primary_weapons: list[str] = ["smg", "shotgun", "sniper", "rocket", "flamer"]
     secondary_weapons: list[str] = ["laser", "katana", "poop"]
 
-    max_party_size: int = 8
+    max_party_size: int = 16
     invite_ttl_seconds: int = 60
 
     events_stream_maxlen: int = 100_000

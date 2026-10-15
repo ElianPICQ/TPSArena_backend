@@ -124,8 +124,8 @@ async def test_each_server_has_its_own_token(client):
     assert (await heartbeat(client, server_id, "idle")).status_code == 200
 
 
-async def test_register_rejects_more_than_8_players(client):
-    body = {"name": "x", "address": "a", "port": 1, "region": "eu", "map": "m", "build_version": BUILD, "max_players": 9}
+async def test_register_rejects_more_than_16_players(client):
+    body = {"name": "x", "address": "a", "port": 1, "region": "eu", "map": "m", "build_version": BUILD, "max_players": 17}
     assert (await client.post("/servers", json=body, headers=GAME_SERVER)).status_code == 422
 
 
@@ -152,7 +152,7 @@ async def test_list_shows_only_joinable_matches(client):
     open_ = await register(client, name="open")
     other_build = await register(client, name="other build", build_version="0.0.9")
     await heartbeat(client, idle, "idle")
-    await heartbeat(client, full, "in_progress", players=8)
+    await heartbeat(client, full, "in_progress", players=16)
     await heartbeat(client, open_, "in_progress", players=3)
     await heartbeat(client, other_build, "in_progress", players=1)
 
@@ -267,9 +267,9 @@ async def test_allocation_matches_build_and_region(client):
     assert (await allocate(client, [uuid.uuid4()])).status_code == 503
 
 
-async def test_allocation_rejects_party_over_8(client):
+async def test_allocation_rejects_party_over_16(client):
     await register(client)
-    r = await allocate(client, [uuid.uuid4() for _ in range(9)])
+    r = await allocate(client, [uuid.uuid4() for _ in range(17)])
     assert r.status_code == 400
     assert r.json()["error"] == "party_too_large"
 
@@ -350,12 +350,12 @@ async def test_ticket_only_works_on_its_server(client):
 
 async def test_unused_tickets_hold_slots(client):
     server_id = await register(client)
-    await heartbeat(client, server_id, "in_progress", players=6)
+    await heartbeat(client, server_id, "in_progress", players=14)
 
     for _ in range(2):
         r = await client.post(f"/servers/{server_id}/join-ticket", headers=player())
         assert r.status_code == 201
-    # 6 players + 2 pending tickets = 8: full, and gone from the list.
+    # 14 players + 2 pending tickets = 16: full, and gone from the list.
     r = await client.post(f"/servers/{server_id}/join-ticket", headers=player())
     assert r.status_code == 409
     assert r.json()["error"] == "server_full"
@@ -364,7 +364,7 @@ async def test_unused_tickets_hold_slots(client):
 
 async def test_expired_tickets_free_their_slot(client):
     server_id = await register(client)
-    await heartbeat(client, server_id, "in_progress", players=7)
+    await heartbeat(client, server_id, "in_progress", players=15)
     ticket = (await client.post(f"/servers/{server_id}/join-ticket", headers=player())).json()["ticket"]
     assert (await client.post(f"/servers/{server_id}/join-ticket", headers=player())).status_code == 409
 

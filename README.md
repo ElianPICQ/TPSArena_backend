@@ -1,7 +1,7 @@
 # TPSArena backend
 
 Backend for **TPSArena**, a third-person free-for-all multiplayer shooter made with Godot 4.
-Players form parties of up to 8 and launch matches on dedicated game servers. Strangers can then
+Players form parties of up to 16 and launch matches on dedicated game servers. Strangers can then
 join a running match from a public server list. Around that, the backend provides accounts,
 friends, chat, presence, stats and leaderboards.
 
@@ -19,7 +19,7 @@ repository), and open gaps are in [`TODO.md`](TODO.md).
 | [BFF](services/bff) | Python, FastAPI | 8000 | Single entry point for the game client: forwards to the services and adds usernames |
 | [Auth](services/auth) | Python, FastAPI | 8001 | Accounts, email codes, login, JWT + refresh tokens, password reset, account deletion, JWKS |
 | [Server List](services/serverlist) | Python, FastAPI | 8002 | Game server registry, public server list, server allocation for parties, join tickets |
-| [Social](services/social) | Python, FastAPI | 8003 | Profiles, friends, parties, invites, party launch |
+| [Social](services/social) | Python, FastAPI | 8003 | Profiles, saved classes (loadouts), friends, parties, invites, party launch |
 | [Stats](services/stats) | Python, FastAPI | 8004 | Match results and history, XP, levels, achievements, leaderboards |
 | [Real-time](services/realtime) | TypeScript, Node 24+ | 8005 | One WebSocket per player: presence, friend messages, party chat, live notifications ([protocol](services/realtime/PROTOCOL.md)) |
 

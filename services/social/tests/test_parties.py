@@ -88,17 +88,17 @@ async def test_accepting_an_invite_leaves_your_party(client):
     assert [e.party_id for e in await events("party.disbanded")] == [own_party]
 
 
-async def test_party_holds_at_most_8(client):
+async def test_party_holds_at_most_16(client):
     leader = new_player()
     party_id = await create_party(client, leader)
-    for _ in range(7):
+    for _ in range(15):
         friend = new_player()
         await befriend(client, leader, friend)
         await invite_and_join(client, party_id, leader, friend)
 
-    ninth = new_player()
-    await befriend(client, leader, ninth)
-    r = await client.post(f"/parties/{party_id}/invite", json={"user_id": str(ninth.user_id)}, headers=leader.headers)
+    extra = new_player()
+    await befriend(client, leader, extra)
+    r = await client.post(f"/parties/{party_id}/invite", json={"user_id": str(extra.user_id)}, headers=leader.headers)
     assert (r.status_code, r.json()["error"]) == (409, "party_full")
 
 
@@ -242,7 +242,7 @@ async def test_launch_passes_match_settings_to_the_server_list(client, mocked):
     route = mocked.post("http://serverlist.test/allocations").mock(
         return_value=httpx.Response(201, json=allocation_for([leader]))
     )
-    body = {"build_version": "0.1.0", "match_settings": {"bots": 8, "duration_seconds": 300}}
+    body = {"build_version": "0.1.0", "match_settings": {"bots": 16, "duration_seconds": 300}}
     r = await client.post(f"/parties/{party_id}/launch", json=body, headers=leader.headers)
     assert r.status_code == 422
     assert not route.called
