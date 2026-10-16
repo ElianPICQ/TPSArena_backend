@@ -50,6 +50,18 @@ ssh-add                                                      # once per session
 docker compose up -d --build
 ```
 
+On Windows (PowerShell 5.1 or 7):
+
+```powershell
+Copy-Item .env.example .env
+Push-Location services/auth; uv run python scripts/gen_keys.py; Pop-Location
+ssh-add                                                      # once per session
+docker compose up -d --build
+```
+
+`ssh-add` needs the OpenSSH agent service, which Windows disables by default. Turn it on once,
+from an administrator PowerShell: `Set-Service ssh-agent -StartupType Automatic; Start-Service ssh-agent`.
+
 This starts 16 containers: the services and their workers, one PostgreSQL per service, Redis and
 Mailpit. Outside the stack you reach:
 
@@ -71,6 +83,16 @@ curl -X POST localhost:8000/auth/verify-email -H 'content-type: application/json
   -d '{"email": "alice@example.dev", "code": "123456"}'     # returns the access and refresh tokens
 ```
 
+On Windows (PowerShell):
+
+```powershell
+Invoke-RestMethod -Method Post http://localhost:8000/auth/register -ContentType application/json `
+  -Body '{"email": "alice@example.dev", "username": "alice", "password": "secret123"}'
+# Read the 6-digit code at http://localhost:8025, then:
+Invoke-RestMethod -Method Post http://localhost:8000/auth/verify-email -ContentType application/json `
+  -Body '{"email": "alice@example.dev", "code": "123456"}'
+```
+
 To try the endpoints by hand, open a local [Bruno](https://www.usebruno.com/) collection in `bruno/`
 (git-ignored, so not in the repository) and select the `Local` environment: it has one request per endpoint. Set your email, username and password in
 the environment, then send Register, Verify email (with the code from Mailpit) and Login.
@@ -84,11 +106,20 @@ Each service can also run alone, with its own database and Redis, from its own f
 
 The Python services use [uv](https://docs.astral.sh/uv/) and Python 3.13+. Real-time uses Node 24+.
 Tests start their own throwaway PostgreSQL and Redis containers, so only Docker needs to be running.
+Run each line from the repository root:
 
 ```sh
-cd services/<name> && uv sync && uv run pytest     # auth, serverlist, social, stats, bff, web-bff
-cd services/realtime && npm install && npm test
-cd libs/common && uv run pytest
+(cd services/<name> && uv sync && uv run pytest)   # auth, serverlist, social, stats, bff, web-bff
+(cd services/realtime && npm install && npm test)
+(cd libs/common && uv run pytest)
+```
+
+On Windows (PowerShell):
+
+```powershell
+Push-Location services/auth; uv sync; uv run pytest; Pop-Location   # same for the other Python services
+Push-Location services/realtime; npm install; npm test; Pop-Location
+Push-Location libs/common; uv run pytest; Pop-Location
 ```
 
 - **Shared package changes**: write them under "Unreleased" in `libs/common/CHANGELOG.md`, then release with
